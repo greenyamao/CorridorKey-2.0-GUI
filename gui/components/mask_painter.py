@@ -15,12 +15,10 @@ import cv2
 from PySide6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize, Signal
 from PySide6.QtGui import (
     QImage,
-    QPixmap,
     QPainter,
     QPen,
     QColor,
     QBrush,
-    QFont,
     QCursor,
     QKeyEvent,
     QWheelEvent,
@@ -35,14 +33,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QFrame,
-    QToolTip,
     QMessageBox,
 )
 from qfluentwidgets import FluentIcon as FI, Theme
 
 from gui.styles.theme import (
     BG_DARK,
-    TEXT_PRIMARY,
     TEXT_SECONDARY,
     ACCENT_BLUE,
     CORRIDOR_GREEN,
@@ -53,35 +49,22 @@ from gui.styles.theme import (
 class PaintCanvas(QWidget):
     """Zero-lag hardware-accelerated painting canvas with pan, zoom, and undo."""
 
+    tool_changed = Signal(str)
+    brush_size_changed = Signal(int)
+
     def __init__(self, bg_image: QImage, initial_mask: Optional[QImage] = None, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.CrossCursor)
 
         self.bg_image = bg_image
         self.img_w = bg_image.width()
         self.img_h = bg_image.height()
 
-        # Grayscale mask (255 = foreground subject, 0 = background)
-        self.mask_image = QImage(self.img_w, self.img_h, QImage.Format.Format_Grayscale8)
-        if initial_mask is not None and not initial_mask.isNull():
-            # Resize initial mask if dimensions mismatch
-            if initial_mask.size() != self.bg_image.size():
-                scaled_init = initial_mask.scaled(
-                    self.img_w,
-                    self.img_h,
-                    Qt.AspectRatioMode.IgnoreAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                self.mask_image = scaled_init.convertToFormat(QImage.Format.Format_Grayscale8)
-            else:
-                self.mask_image = initial_mask.convertToFormat(QImage.Format.Format_Grayscale8)
-        else:
-            self.mask_image.fill(0)
-
-        # Undo stack (stores up to 12 snapshot copies of mask)
-        self.undo_stack: List[QImage] = []
-        self._push_undo()
+        # Visual overlay buffer (Format_RGBA8888 for native per-pixel alpha transparency)
+        self.overlay_image = QImage(self.img_w, self.img_h, QImage.Format.Format_RGBA8888)
+        self.overlay_image.fill(QColor(0, 0, 0, 0))
 
         # Tool parameters
         self.tool_mode = "brush"  # "brush" | "eraser"
@@ -89,11 +72,19 @@ class PaintCanvas(QWidget):
         self.overlay_opacity = 0.55  # 0.20 to 0.90
         self.mask_color = QColor(0, 225, 255)  # High-visibility neon cyan
 
+        # Populate from existing initial mask if provided
+        if initial_mask is not None and not initial_mask.isNull():
+            self._load_initial_mask(initial_mask)
+
+        # Undo stack (stores up to 15 snapshot copies of the overlay)
+        self.undo_stack: List[QImage] = []
+
         # Pan and Zoom transform
         self.zoom_factor = 1.0
         self.pan_offset = QPoint(0, 0)
         self._is_panning = False
         self._is_drawing = False
+        self._space_held = False
         self._last_mouse_pos = QPoint()
         self._last_img_pt: Optional[QPointF] = None
         self._cursor_widget_pos = QPoint(-100, -100)
@@ -101,20 +92,41 @@ class PaintCanvas(QWidget):
         # Initial fit
         self._first_show = True
 
+    def _load_initial_mask(self, initial_mask: QImage):
+        """Populates overlay_image RGBA from an existing grayscale or color mask."""
+        if initial_mask.size() != QSize(self.img_w, self.img_h):
+            initial_mask = initial_mask.scaled(
+                self.img_w,
+                self.img_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        mono_qimg = initial_mask.convertToFormat(QImage.Format.Format_Grayscale8)
+        ptr = mono_qimg.constBits()
+        mono_arr = np.frombuffer(ptr, dtype=np.uint8).reshape((self.img_h, self.img_w))
+        mask_active = mono_arr > 128
+
+        ov_ptr = self.overlay_image.bits()
+        ov_arr = np.frombuffer(ov_ptr, dtype=np.uint8).reshape((self.img_h, self.img_w, 4))
+        # Format_RGBA8888: R=0, G=1, B=2, A=3
+        ov_arr[mask_active, 0] = self.mask_color.red()
+        ov_arr[mask_active, 1] = self.mask_color.green()
+        ov_arr[mask_active, 2] = self.mask_color.blue()
+        ov_arr[mask_active, 3] = 255
+
     def _push_undo(self):
-        if len(self.undo_stack) >= 12:
+        if len(self.undo_stack) >= 15:
             self.undo_stack.pop(0)
-        self.undo_stack.append(self.mask_image.copy())
+        self.undo_stack.append(self.overlay_image.copy())
 
     def undo(self):
-        if len(self.undo_stack) > 1:
-            self.undo_stack.pop()  # Remove current state
-            self.mask_image = self.undo_stack[-1].copy()
+        if self.undo_stack:
+            self.overlay_image = self.undo_stack.pop()
             self.update()
 
     def clear_mask(self):
         self._push_undo()
-        self.mask_image.fill(0)
+        self.overlay_image.fill(QColor(0, 0, 0, 0))
         self.update()
 
     def reset_view(self):
@@ -129,16 +141,21 @@ class PaintCanvas(QWidget):
             self.update()
 
     def set_brush_size(self, size: int):
-        self.brush_size = max(4, min(size, 300))
-        self.update()
+        new_size = max(4, min(size, 300))
+        if new_size != self.brush_size:
+            self.brush_size = new_size
+            self.brush_size_changed.emit(self.brush_size)
+            self.update()
 
     def set_overlay_opacity(self, opacity: float):
         self.overlay_opacity = max(0.1, min(opacity, 0.95))
         self.update()
 
     def set_tool(self, tool: str):
-        self.tool_mode = tool
-        self.update()
+        if tool in ("brush", "eraser") and tool != self.tool_mode:
+            self.tool_mode = tool
+            self.tool_changed.emit(self.tool_mode)
+            self.update()
 
     def widget_to_image(self, pt: QPoint) -> QPointF:
         """Converts widget pixel position to floating-point image coordinates."""
@@ -152,27 +169,64 @@ class PaintCanvas(QWidget):
         wy = int(pt.y() * self.zoom_factor + self.pan_offset.y())
         return QPoint(wx, wy)
 
-    def _draw_stroke_segment(self, p1: QPointF, p2: QPointF):
-        """Draws smooth anti-aliased line stroke with round caps directly on the grayscale mask."""
-        painter = QPainter(self.mask_image)
+    def _draw_dot(self, pt: QPointF):
+        """Draws a solid circular dot at pt for single mouse clicks."""
+        painter = QPainter(self.overlay_image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        color = QColor(255, 255, 255) if self.tool_mode == "brush" else QColor(0, 0, 0)
-        pen = QPen(
-            color,
-            self.brush_size,
-            Qt.PenStyle.SolidLine,
-            Qt.PenCapStyle.RoundCap,
-            Qt.PenJoinStyle.RoundJoin,
-        )
-        painter.setPen(pen)
-        painter.drawLine(p1, p2)
+        radius = self.brush_size / 2.0
+        if self.tool_mode == "brush":
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(self.mask_color))
+            painter.drawEllipse(pt, radius, radius)
+        else:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(Qt.GlobalColor.transparent))
+            painter.drawEllipse(pt, radius, radius)
+        painter.end()
+
+    def _draw_stroke_segment(self, p1: QPointF, p2: QPointF):
+        """Draws smooth anti-aliased line stroke with round caps between p1 and p2."""
+        painter = QPainter(self.overlay_image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self.tool_mode == "brush":
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            pen = QPen(
+                self.mask_color,
+                self.brush_size,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+            painter.setPen(pen)
+            painter.drawLine(p1, p2)
+        else:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+            pen = QPen(
+                Qt.GlobalColor.transparent,
+                self.brush_size,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+            painter.setPen(pen)
+            painter.drawLine(p1, p2)
         painter.end()
 
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.MiddleButton or (
-            event.button() == Qt.MouseButton.LeftButton
-            and (event.modifiers() & Qt.KeyboardModifier.ControlModifier or event.modifiers() & Qt.KeyboardModifier.AltModifier)
-        ):
+        is_pan_click = (
+            event.button() == Qt.MouseButton.MiddleButton
+            or self._space_held
+            or (
+                event.button() == Qt.MouseButton.LeftButton
+                and (
+                    event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    or event.modifiers() & Qt.KeyboardModifier.AltModifier
+                )
+            )
+        )
+        if is_pan_click:
             self._is_panning = True
             self._last_mouse_pos = event.pos()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -183,8 +237,8 @@ class PaintCanvas(QWidget):
             self._is_drawing = True
             img_pt = self.widget_to_image(event.pos())
             self._last_img_pt = img_pt
-            # Draw initial dot
-            self._draw_stroke_segment(img_pt, img_pt)
+            # Draw initial dot on mouse down
+            self._draw_dot(img_pt)
             self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -210,12 +264,19 @@ class PaintCanvas(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.MiddleButton or self._is_panning:
             self._is_panning = False
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            cursor_to_restore = (
+                Qt.CursorShape.OpenHandCursor if self._space_held else Qt.CursorShape.CrossCursor
+            )
+            self.setCursor(cursor_to_restore)
 
         if event.button() == Qt.MouseButton.LeftButton and self._is_drawing:
             self._is_drawing = False
             self._last_img_pt = None
             self.update()
+
+    def leaveEvent(self, event):
+        self._cursor_widget_pos = QPoint(-100, -100)
+        self.update()
 
     def wheelEvent(self, event: QWheelEvent):
         # Ctrl + Wheel adjusts brush size
@@ -228,7 +289,6 @@ class PaintCanvas(QWidget):
         factor = 1.15 if event.angleDelta().y() > 0 else (1.0 / 1.15)
         new_zoom = max(0.05, min(self.zoom_factor * factor, 8.0))
 
-        # Anchor zoom around mouse position
         mouse_pos = event.position().toPoint()
         img_pt = self.widget_to_image(mouse_pos)
 
@@ -241,7 +301,11 @@ class PaintCanvas(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
-        if key == Qt.Key.Key_B:
+        if key == Qt.Key.Key_Space and not event.isAutoRepeat():
+            self._space_held = True
+            if not self._is_panning:
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+        elif key == Qt.Key.Key_B:
             self.set_tool("brush")
         elif key == Qt.Key.Key_E:
             self.set_tool("eraser")
@@ -256,12 +320,19 @@ class PaintCanvas(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def keyReleaseEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
+            self._space_held = False
+            if not self._is_panning:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+        super().keyReleaseEvent(event)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-        # 1. Canvas background
+        # 1. Dark canvas background
         painter.fillRect(self.rect(), QColor(BG_DARK))
 
         if self._first_show:
@@ -276,30 +347,10 @@ class PaintCanvas(QWidget):
         # 2. Draw base video frame
         painter.drawImage(dest_rect, self.bg_image)
 
-        # 3. Draw semi-transparent colored mask overlay
+        # 3. Draw semi-transparent painted mask overlay directly with zero lag
         painter.save()
-        # Create translucent tinted mask representation
         painter.setOpacity(self.overlay_opacity)
-        # Using composition mode to render mask as vibrant cyan highlight
-        # Fast conversion: create RGBA overlay from mask_image
-        w_sub = self.mask_image.width()
-        h_sub = self.mask_image.height()
-
-        # Direct blit of colored mask:
-        # Convert mask Grayscale8 to tinted color on the fly
-        # To make it zero-lag, we use QPainter CompositionMode_Screen or draw cyan with mask
-        mask_rgba = QImage(w_sub, h_sub, QImage.Format.Format_ARGB32_Premultiplied)
-        mask_rgba.fill(QColor(0, 0, 0, 0))
-
-        # Paint cyan into mask_rgba masked by self.mask_image
-        p_mask = QPainter(mask_rgba)
-        p_mask.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        p_mask.drawImage(0, 0, self.mask_image)
-        p_mask.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        p_mask.fillRect(0, 0, w_sub, h_sub, self.mask_color)
-        p_mask.end()
-
-        painter.drawImage(dest_rect, mask_rgba)
+        painter.drawImage(dest_rect, self.overlay_image)
         painter.restore()
 
         # 4. Draw image border
@@ -310,29 +361,47 @@ class PaintCanvas(QWidget):
         if not self._is_panning and self.rect().contains(self._cursor_widget_pos):
             screen_brush_radius = (self.brush_size * self.zoom_factor) / 2.0
             painter.save()
-            cursor_color = QColor(0, 225, 255) if self.tool_mode == "brush" else QColor(255, 75, 75)
+            cursor_color = (
+                QColor(0, 225, 255) if self.tool_mode == "brush" else QColor(255, 75, 75)
+            )
             pen = QPen(cursor_color, 1.5, Qt.PenStyle.SolidLine)
             painter.setPen(pen)
-            painter.setBrush(QBrush(QColor(cursor_color.red(), cursor_color.green(), cursor_color.blue(), 30)))
+            painter.setBrush(
+                QBrush(QColor(cursor_color.red(), cursor_color.green(), cursor_color.blue(), 35))
+            )
             painter.drawEllipse(
                 QPointF(self._cursor_widget_pos),
                 screen_brush_radius,
                 screen_brush_radius,
             )
-            # Tiny center crosshair
-            painter.drawLine(
-                self._cursor_widget_pos.x() - 3,
-                self._cursor_widget_pos.y(),
-                self._cursor_widget_pos.x() + 3,
-                self._cursor_widget_pos.y(),
-            )
-            painter.drawLine(
-                self._cursor_widget_pos.x(),
-                self._cursor_widget_pos.y() - 3,
-                self._cursor_widget_pos.x(),
-                self._cursor_widget_pos.y() + 3,
-            )
+            # Center crosshair
+            cx = self._cursor_widget_pos.x()
+            cy = self._cursor_widget_pos.y()
+            painter.drawLine(cx - 4, cy, cx + 4, cy)
+            painter.drawLine(cx, cy - 4, cx, cy + 4)
             painter.restore()
+
+    def get_mask_image(self) -> QImage:
+        """Returns an 8-bit grayscale QImage (0 = background, 255 = foreground)."""
+        ptr = self.overlay_image.constBits()
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((self.img_h, self.img_w, 4))
+        alpha = arr[:, :, 3]
+        mask_bytes = np.where(alpha > 15, 255, 0).astype(np.uint8)
+        mask_bytes = np.ascontiguousarray(mask_bytes)
+        return QImage(
+            mask_bytes.data, self.img_w, self.img_h, self.img_w, QImage.Format.Format_Grayscale8
+        ).copy()
+
+    @property
+    def mask_image(self) -> QImage:
+        """Backward-compatible property returning the 8-bit grayscale mask."""
+        return self.get_mask_image()
+
+    def has_drawn_strokes(self) -> bool:
+        """Returns True if at least one mask pixel has been painted."""
+        ptr = self.overlay_image.constBits()
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((self.img_h, self.img_w, 4))
+        return bool(np.any(arr[:, :, 3] > 15))
 
 
 class MaskPainterDialog(QDialog):
@@ -408,7 +477,9 @@ class MaskPainterDialog(QDialog):
 
         # Title
         lbl_head = QLabel("MASK PAINTER")
-        lbl_head.setStyleSheet("color: #FFFFFF; font-weight: 700; font-size: 11px; letter-spacing: 0.5px;")
+        lbl_head.setStyleSheet(
+            "color: #FFFFFF; font-weight: 700; font-size: 11px; letter-spacing: 0.5px;"
+        )
         tb_layout.addWidget(lbl_head)
 
         tb_layout.addSpacing(6)
@@ -539,22 +610,28 @@ class MaskPainterDialog(QDialog):
 
         # 2. Main Interactive Canvas
         self.canvas = PaintCanvas(self.bg_qimage, initial_mask=initial_mask_img, parent=self)
+        self.canvas.tool_changed.connect(self._on_canvas_tool_changed)
+        self.canvas.brush_size_changed.connect(self._on_canvas_size_changed)
         main_layout.addWidget(self.canvas, stretch=1)
 
         # 3. Bottom Guidance Strip
         tip_banner = QFrame()
         tip_banner.setFixedHeight(28)
-        tip_banner.setStyleSheet("background-color: #16161A; border: 1px solid #222228; border-radius: 4px;")
+        tip_banner.setStyleSheet(
+            "background-color: #16161A; border: 1px solid #222228; border-radius: 4px;"
+        )
         tb_in_layout = QHBoxLayout(tip_banner)
         tb_in_layout.setContentsMargins(10, 0, 10, 0)
         lbl_info = QLabel(
-            "Quick Tips:  [B] Brush  |  [E] Eraser  |  [ [ / ] ] Size  |  [Ctrl+Z] Undo  |  [Middle Mouse / Ctrl+Drag] Pan  |  [Wheel] Zoom"
+            "Quick Tips:  [B] Brush  |  [E] Eraser  |  [ [ / ] ] Size  |  [Ctrl+Z] Undo  |  [Space / Middle Mouse / Ctrl+Drag] Pan  |  [Wheel] Zoom"
         )
         lbl_info.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
         tb_in_layout.addWidget(lbl_info)
         tb_in_layout.addStretch()
 
-        lbl_hint_advice = QLabel("Paint body silhouette with broad strokes. Fine hair and transparent edges are extracted automatically by AI.")
+        lbl_hint_advice = QLabel(
+            "Paint body silhouette with broad strokes. Fine hair and transparent edges are extracted automatically by AI."
+        )
         lbl_hint_advice.setStyleSheet(f"color: {CORRIDOR_YELLOW}; font-size: 11px; font-weight: 600;")
         tb_in_layout.addWidget(lbl_hint_advice)
 
@@ -565,9 +642,19 @@ class MaskPainterDialog(QDialog):
         self.btn_eraser.setChecked(tool == "eraser")
         self.canvas.set_tool(tool)
 
+    def _on_canvas_tool_changed(self, tool: str):
+        self.btn_brush.setChecked(tool == "brush")
+        self.btn_eraser.setChecked(tool == "eraser")
+
     def _on_size_changed(self, val: int):
         self.lbl_size_val.setText(f"{val} px")
         self.canvas.set_brush_size(val)
+
+    def _on_canvas_size_changed(self, val: int):
+        self.slider_size.blockSignals(True)
+        self.slider_size.setValue(val)
+        self.lbl_size_val.setText(f"{val} px")
+        self.slider_size.blockSignals(False)
 
     def _on_opacity_changed(self, val: int):
         self.lbl_op_val.setText(f"{val}%")
@@ -575,6 +662,17 @@ class MaskPainterDialog(QDialog):
 
     def _on_save_mask(self):
         """Saves mask to disk as <clip_stem>FrameHint.png and closes dialog."""
+        if not self.canvas.has_drawn_strokes():
+            reply = QMessageBox.question(
+                self,
+                "Empty Mask Warning",
+                "No mask strokes have been painted.\nDo you want to save an empty mask anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         clip_p = Path(self.clip_path)
         stem = clip_p.stem
 
@@ -594,7 +692,8 @@ class MaskPainterDialog(QDialog):
             out_path = candidate_dir / f"{stem}FrameHint.png"
 
         # Save QImage mask to disk as standard 8-bit grayscale PNG
-        success = self.canvas.mask_image.save(str(out_path), "PNG")
+        mask_qimg = self.canvas.get_mask_image()
+        success = mask_qimg.save(str(out_path), "PNG")
         if not success:
             QMessageBox.critical(self, "Save Error", f"Could not save mask file to:\n{out_path}")
             return
