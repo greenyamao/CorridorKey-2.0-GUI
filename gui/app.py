@@ -339,11 +339,12 @@ class MainWindow(QMainWindow):
 
         self.btn_single = QPushButton("Single")
         self.btn_single.setCheckable(True)
-        self.btn_single.setChecked(True)
+        self.btn_single.setChecked(False)
         self.btn_single.setToolTip("<b>Single Mode</b><br>Full view of the selected channel.")
 
         self.btn_wipe = QPushButton("Wipe")
         self.btn_wipe.setCheckable(True)
+        self.btn_wipe.setChecked(True)
         self.btn_wipe.setToolTip("<b>Wipe Mode</b><br>Interactive split screen: original video on the left, processed key on the right. Drag the vertical divider line.")
 
         self.btn_sbs = QPushButton("Side by Side")
@@ -965,8 +966,13 @@ class MainWindow(QMainWindow):
         settings.setValue("window_state", self.saveState())
         if hasattr(self, "splitter"):
             settings.setValue("splitter_state", self.splitter.saveState())
-        if hasattr(self, "cmb_mode"):
-            settings.setValue("viewport_mode", self.cmb_mode.currentIndex())
+        if hasattr(self, "btn_wipe"):
+            disp_mode = "Wipe"
+            if self.btn_single.isChecked():
+                disp_mode = "Single"
+            elif self.btn_sbs.isChecked():
+                disp_mode = "Side by side"
+            settings.setValue("viewport_mode", disp_mode)
         if hasattr(self, "cmb_channel"):
             settings.setValue("viewport_channel", self.cmb_channel.currentIndex())
         if hasattr(self, "inspector"):
@@ -983,8 +989,9 @@ class MainWindow(QMainWindow):
         splitter_state = settings.value("splitter_state")
         if splitter_state and hasattr(self, "splitter"):
             self.splitter.restoreState(splitter_state)
-        if hasattr(self, "cmb_mode") and settings.contains("viewport_mode"):
-            self.cmb_mode.setCurrentIndex(int(settings.value("viewport_mode", 0)))
+        if hasattr(self, "btn_wipe"):
+            disp_mode = str(settings.value("viewport_mode", "Wipe"))
+            self._set_disp_mode(disp_mode)
         if hasattr(self, "cmb_channel") and settings.contains("viewport_channel"):
             self.cmb_channel.setCurrentIndex(int(settings.value("viewport_channel", 0)))
         if hasattr(self, "inspector"):

@@ -39,7 +39,7 @@ class ViewportWidget(QWidget):
         self._fg_frame: Optional[QImage] = None
 
         # Display settings
-        self.display_mode = "Single"  # "Single", "Wipe", "Side by side"
+        self.display_mode = "Wipe"  # "Wipe" (default), "Single", "Side by side"
         self.channel_mode = "Composite"  # "Composite", "Alpha", "Foreground", "Original"
         self.wipe_split = 0.5  # 0.0 to 1.0
         self.despill_strength = 0.5  # 0.0 to 1.0

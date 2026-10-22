@@ -629,7 +629,7 @@ class InspectorPanel(QFrame):
         passes_grid2.addWidget(self.chk_out_fg)
 
         self.chk_out_checker = CheckBox("Checker (Preview)")
-        self.chk_out_checker.setChecked(False)
+        self.chk_out_checker.setChecked(True)
         self.chk_out_checker.setToolTip(
             "<b>Checker Preview Pass (MP4)</b><br>"
             "Universal preview video composited over transparency checkerboard. Plays directly in Windows Media Player."
@@ -1087,7 +1087,7 @@ class InspectorPanel(QFrame):
         if settings.contains("out_fg"):
             self.chk_out_fg.setChecked(settings.value("out_fg", False, type=bool))
         if settings.contains("out_checker"):
-            self.chk_out_checker.setChecked(settings.value("out_checker", False, type=bool))
+            self.chk_out_checker.setChecked(settings.value("out_checker", True, type=bool))
         if settings.contains("format"):
             self.cmb_format.setCurrentIndex(int(settings.value("format", 0)))
         if settings.contains("output_dir"):
