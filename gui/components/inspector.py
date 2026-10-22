@@ -843,6 +843,11 @@ class InspectorPanel(QFrame):
         gpu_info = get_gpu_info()
         total_gpu = gpu_info.get("total_gb", 8.0)
 
+        if not gpu_info.get("is_supported", True) and gpu_info.get("available", False):
+            self.lbl_vram_info.setText("Warning: GPU older than RTX 30-series (missing hardware bfloat16 support)")
+            self.lbl_vram_info.setStyleSheet("color: #F87171; font-size: 11px; padding: 2px;")
+            return
+
         status_color = CORRIDOR_GREEN if fits else "#F87171"
         status_text = "VRAM OK" if fits else "Warning: VRAM may exceed capacity"
 

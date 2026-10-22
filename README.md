@@ -36,9 +36,13 @@ python run_gui.py
 
 ## Requirements
 
-* Windows 10 or 11 (64 bit)
-* NVIDIA graphics card with at least 8 GB VRAM
-* Python 3.10, 3.11, or 3.12 installed with PATH enabled
+* **Operating System:** Windows 10 or 11 (64-bit)
+* **GPU:** NVIDIA GeForce RTX 30-series or newer (RTX 30xx, RTX 40xx, RTX 50xx / Ampere, Ada Lovelace, Blackwell) with native `bfloat16` Tensor Core support.
+  * At least 4 GB VRAM for footage up to 1440p (`Low GPU Memory` mode).
+  * At least 6–8 GB VRAM for 4K (`Low GPU Memory` mode).
+  * *Note:* Older GPUs (RTX 20-series, GTX 10-series/16-series, AMD Radeon, Intel Arc) are not supported because they lack hardware `bfloat16` execution units required by the vision transformer architecture.
+* **Python:** Python 3.10, 3.11, or 3.12 with CUDA-enabled PyTorch installed
+* **FFmpeg:** Installed and available on system PATH (handled automatically by `launch_gui.bat`)
 
 ## Acknowledgements & Core Engine
 

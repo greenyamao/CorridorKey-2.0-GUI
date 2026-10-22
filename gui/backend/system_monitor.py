@@ -46,6 +46,13 @@ def get_gpu_info() -> Dict[str, Any]:
             total_gb = mem.total / (1024 ** 3)
             used_gb = mem.used / (1024 ** 3)
             free_gb = mem.free / (1024 ** 3)
+            major, minor = (8, 0)
+            if torch.cuda.is_available():
+                try:
+                    major, minor = torch.cuda.get_device_capability()
+                except Exception:
+                    pass
+            is_supported = (major >= 8)
             return {
                 "available": True,
                 "device_name": str(name),
@@ -54,6 +61,8 @@ def get_gpu_info() -> Dict[str, Any]:
                 "total_gb": round(total_gb, 1),
                 "gpu_util": int(util.gpu),
                 "mem_util": int(util.memory),
+                "compute_cap": (major, minor),
+                "is_supported": is_supported,
             }
         except Exception:
             pass
@@ -67,6 +76,8 @@ def get_gpu_info() -> Dict[str, Any]:
             "total_gb": 0.0,
             "gpu_util": 0,
             "mem_util": 0,
+            "compute_cap": (0, 0),
+            "is_supported": False,
         }
     
     try:
@@ -75,6 +86,7 @@ def get_gpu_info() -> Dict[str, Any]:
         free_gb = free_bytes / (1024 ** 3)
         used_gb = total_gb - free_gb
         device_name = torch.cuda.get_device_name(0)
+        major, minor = torch.cuda.get_device_capability()
         return {
             "available": True,
             "device_name": device_name,
@@ -83,6 +95,8 @@ def get_gpu_info() -> Dict[str, Any]:
             "total_gb": round(total_gb, 1),
             "gpu_util": 0,
             "mem_util": 0,
+            "compute_cap": (major, minor),
+            "is_supported": (major >= 8),
         }
     except Exception as e:
         return {
@@ -93,6 +107,8 @@ def get_gpu_info() -> Dict[str, Any]:
             "total_gb": 0.0,
             "gpu_util": 0,
             "mem_util": 0,
+            "compute_cap": (0, 0),
+            "is_supported": False,
         }
 
 
