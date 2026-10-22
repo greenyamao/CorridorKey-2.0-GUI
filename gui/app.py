@@ -254,6 +254,9 @@ class MainWindow(QMainWindow):
         self.render_queue: List[RenderTask] = []
         self.queue_items_map: Dict[str, Any] = {}
         self.active_runner: Optional[RenderRunner] = None
+        self.rendered_alpha_reader: Optional[VideoReader] = None
+        self.rendered_fg_reader: Optional[VideoReader] = None
+        self._last_rendered_out_dir: str = ""
         self._current_rendering_path: str = ""
 
         self._init_ui()
@@ -637,11 +640,89 @@ class MainWindow(QMainWindow):
         channels = ["Composite", "Alpha", "Foreground", "Original"]
         self.viewport.set_channel_mode(channels[idx])
 
+    def _check_and_load_rendered_outputs(self, clip: Optional[ClipInfo]) -> bool:
+        """Checks if rendered alpha/foreground videos exist for this clip, and loads them for live preview."""
+        if clip is None:
+            return False
+
+        stem = Path(clip.path).stem
+        base_out = Path(self.inspector.output_dir)
+        possible_dirs = [
+            base_out / f"out_{stem}",
+            base_out,
+            Path.home() / "Videos" / "CorridorKey_Renders" / f"out_{stem}",
+            Path.home() / "Videos" / "CorridorKey_Renders",
+        ]
+
+        found_alpha: Optional[Path] = None
+        found_fg: Optional[Path] = None
+        target_dir: Optional[Path] = None
+
+        for d in possible_dirs:
+            if not d.is_dir():
+                continue
+            alpha_candidates = list(d.glob(f"{stem}_alpha.*")) or list(d.glob("*_alpha.*"))
+            if alpha_candidates:
+                found_alpha = alpha_candidates[0]
+                target_dir = d
+                fg_candidates = list(d.glob(f"{stem}_fg.*")) or list(d.glob("*_fg.*"))
+                if fg_candidates:
+                    found_fg = fg_candidates[0]
+                break
+
+        if found_alpha and found_alpha.is_file():
+            if self.rendered_alpha_reader is not None:
+                self.rendered_alpha_reader.close()
+            self.rendered_alpha_reader = VideoReader(probe_clip(str(found_alpha)))
+            self.rendered_alpha_reader.open()
+
+            if found_fg and found_fg.is_file():
+                if self.rendered_fg_reader is not None:
+                    self.rendered_fg_reader.close()
+                self.rendered_fg_reader = VideoReader(probe_clip(str(found_fg)))
+                self.rendered_fg_reader.open()
+
+            self._last_rendered_out_dir = str(target_dir) if target_dir else ""
+            self.media_panel.set_clip_status(clip.path, "Done")
+            return True
+
+        return False
+
+    def _display_current_frame(self):
+        if self.active_reader is None:
+            return
+        frame_idx = self.timeline.current_frame
+        orig_rgb = self.active_reader.get_frame(frame_idx)
+        if orig_rgb is None:
+            return
+
+        alpha_matte = None
+        if self.rendered_alpha_reader is not None:
+            a_frame = self.rendered_alpha_reader.get_frame(frame_idx)
+            if a_frame is not None:
+                alpha_matte = a_frame[:, :, 0] if a_frame.ndim == 3 else a_frame
+        elif self._active_hint_mask is not None:
+            alpha_matte = self._active_hint_mask
+
+        fg_rgb = orig_rgb
+        if self.rendered_fg_reader is not None:
+            f_frame = self.rendered_fg_reader.get_frame(frame_idx)
+            if f_frame is not None:
+                fg_rgb = f_frame
+
+        self.viewport.set_frames(rgb_frame=fg_rgb, alpha_matte=alpha_matte, original_rgb=orig_rgb)
+
     def _on_clip_selected(self, clip: ClipInfo):
         self.current_clip = clip
 
         if self.active_reader is not None:
             self.active_reader.close()
+        if self.rendered_alpha_reader is not None:
+            self.rendered_alpha_reader.close()
+            self.rendered_alpha_reader = None
+        if self.rendered_fg_reader is not None:
+            self.rendered_fg_reader.close()
+            self.rendered_fg_reader = None
 
         self.active_reader = VideoReader(clip)
         self.active_reader.open()
@@ -649,8 +730,6 @@ class MainWindow(QMainWindow):
         self.timeline.set_clip(clip.total_frames, clip.fps)
         self.inspector.set_clip(clip)
 
-        frame_0 = self.active_reader.get_frame(0)
-        
         # Load companion hint mask once and cache in memory for zero-lag playback
         self._active_hint_mask = None
         if clip.discovered_hint_path and os.path.exists(clip.discovered_hint_path):
@@ -659,14 +738,14 @@ class MainWindow(QMainWindow):
                 import cv2
                 self._active_hint_mask = cv2.imread(clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
 
-        self.viewport.set_frames(frame_0, alpha_matte=self._active_hint_mask, original_rgb=frame_0)
+        # Check if already rendered previously
+        self._check_and_load_rendered_outputs(clip)
+
+        self._display_current_frame()
         self.viewport.reset_view()
 
     def _on_timeline_frame_changed(self, frame_idx: int):
-        if self.active_reader is not None:
-            rgb = self.active_reader.get_frame(frame_idx)
-            if rgb is not None:
-                self.viewport.set_frames(rgb, alpha_matte=self._active_hint_mask, original_rgb=rgb)
+        self._display_current_frame()
 
     def _on_hint_changed(self, hint_path: str):
         self._active_hint_mask = None
@@ -675,10 +754,7 @@ class MainWindow(QMainWindow):
             if ext in {".png", ".jpg", ".jpeg", ".exr"}:
                 import cv2
                 self._active_hint_mask = cv2.imread(hint_path, cv2.IMREAD_GRAYSCALE)
-        if self.active_reader is not None:
-            rgb = self.active_reader.get_frame(self.timeline.current_frame)
-            if rgb is not None:
-                self.viewport.set_frames(rgb, alpha_matte=self._active_hint_mask, original_rgb=rgb)
+        self._display_current_frame()
 
     def _update_system_stats(self):
         gpu = get_gpu_info()
@@ -770,6 +846,27 @@ class MainWindow(QMainWindow):
             clip_name = Path(clip_path).name if clip_path else "Task"
             self.lbl_status.setText(f"Done: {clip_name}")
             self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
+
+            # Automatically bind rendered output and update the Viewport with transparent background!
+            self._check_and_load_rendered_outputs(self.current_clip)
+            self._display_current_frame()
+
+            task_out = getattr(self, '_last_rendered_out_dir', "")
+            if not task_out and clip_path:
+                task_out = str(Path(self.inspector.output_dir) / f"out_{Path(clip_path).stem}")
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Rendering Complete")
+            msg_box.setText(f"Rendering finished successfully for:\n{clip_name}")
+            msg_box.setInformativeText(f"Saved to folder:\n{task_out}\n\nProcessed transparency preview is now active in the Viewport.")
+            btn_open = msg_box.addButton("Open Output Folder", QMessageBox.ButtonRole.ActionRole)
+            btn_ok = msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+            msg_box.exec()
+            if msg_box.clickedButton() == btn_open and task_out and os.path.exists(task_out):
+                try:
+                    os.startfile(task_out)
+                except Exception as e:
+                    print(f"[MainWindow] Could not open folder: {e}")
         else:
             self.lbl_status.setText(f"Error: {msg}")
             self.lbl_status.setStyleSheet("color: #FF5252; font-size: 11px; font-weight: 600;")
@@ -782,8 +879,6 @@ class MainWindow(QMainWindow):
             self._process_next_in_queue()
         else:
             self.media_panel.set_batch_running(False)
-            if success:
-                QMessageBox.information(self, "Rendering Finished", "All render tasks completed successfully!")
 
     def closeEvent(self, event):
         if self.active_runner is not None and self.active_runner.isRunning():
@@ -791,6 +886,10 @@ class MainWindow(QMainWindow):
             self.active_runner.wait(1000)
         if self.active_reader is not None:
             self.active_reader.close()
+        if self.rendered_alpha_reader is not None:
+            self.rendered_alpha_reader.close()
+        if self.rendered_fg_reader is not None:
+            self.rendered_fg_reader.close()
         event.accept()
 
     # Drag and Drop support

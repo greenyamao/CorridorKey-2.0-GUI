@@ -565,7 +565,7 @@ class InspectorPanel(QFrame):
         fmt_box.addWidget(self.cmb_format, stretch=1)
         layout.addLayout(fmt_box)
 
-        # Output folder header: Label on left, Browse on right
+        # Output folder header: Label on left, Open & Browse on right
         out_f_head = QHBoxLayout()
         out_f_head.setSpacing(6)
         lbl_out = QLabel("Output Folder:")
@@ -574,6 +574,15 @@ class InspectorPanel(QFrame):
         lbl_out.setToolTip(tip_out)
         out_f_head.addWidget(lbl_out)
         out_f_head.addStretch()
+
+        btn_open_out = QPushButton("Open")
+        btn_open_out.setIcon(FI.FOLDER.icon(Theme.DARK))
+        btn_open_out.setIconSize(QSize(12, 12))
+        btn_open_out.setProperty("class", "pill-btn")
+        btn_open_out.setFixedHeight(22)
+        btn_open_out.setToolTip("Открыть папку экспорта в Проводнике Windows")
+        btn_open_out.clicked.connect(self._on_open_out_dir)
+        out_f_head.addWidget(btn_open_out)
 
         btn_out_dir = QPushButton("Browse...")
         btn_out_dir.setIcon(FI.FOLDER.icon(Theme.DARK))
@@ -744,6 +753,19 @@ class InspectorPanel(QFrame):
             self.txt_out_dir.setText(d)
             self.txt_out_dir.setToolTip(d)
             self._recalc_vram()
+
+    def _on_open_out_dir(self):
+        target = self.output_dir
+        if self.current_clip:
+            stem = Path(self.current_clip.path).stem
+            clip_sub = Path(self.output_dir) / f"out_{stem}"
+            if clip_sub.is_dir():
+                target = str(clip_sub)
+        if os.path.exists(target):
+            try:
+                os.startfile(target)
+            except Exception as e:
+                print(f"[Inspector] Could not open folder: {e}")
 
     def get_render_task(self, clip: Optional[ClipInfo] = None) -> Optional[RenderTask]:
         target_clip = clip or self.current_clip
