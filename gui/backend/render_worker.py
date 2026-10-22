@@ -75,13 +75,13 @@ class RenderTask:
     low_vram_full_attn_query_chunk_tokens: int = 2048
 
 
-class RenderRunner(QObject):
+class RenderRunner(QThread):
     progress_changed = Signal(str, int, int, float, str)  # task_id, frame, total, percent, status
     log_received = Signal(str, str)  # task_id, line
-    finished = Signal(str, bool, str)  # task_id, success, message
+    finished_signal = Signal(str, bool, str)  # task_id, success, message
 
-    def __init__(self, task: RenderTask):
-        super().__init__()
+    def __init__(self, task: RenderTask, parent=None):
+        super().__init__(parent)
         self.task = task
         self._process: Optional[subprocess.Popen] = None
         self._is_cancelled = False
@@ -91,6 +91,15 @@ class RenderRunner(QObject):
         if self._process and self._process.poll() is None:
             try:
                 self._process.terminate()
+            except Exception:
+                pass
+            try:
+                if self._process.stdout:
+                    self._process.stdout.close()
+            except Exception:
+                pass
+            try:
+                self._process.wait(timeout=0.5)
             except Exception:
                 pass
 
@@ -103,7 +112,7 @@ class RenderRunner(QObject):
             if (root_dir / "infer.py").is_file():
                 infer_script = root_dir / "infer.py"
             else:
-                self.finished.emit(self.task.task_id, False, "CorridorKey engine (infer.py) not found. Please download engine or link your existing CorridorKey folder.")
+                self.finished_signal.emit(self.task.task_id, False, "CorridorKey engine (infer.py) not found. Please download engine or link your existing CorridorKey folder.")
                 return
 
         # Ensure portable FFmpeg is in PATH if present in ./bin
@@ -244,19 +253,19 @@ class RenderRunner(QObject):
             return_code = self._process.wait()
 
             if self._is_cancelled:
-                self.finished.emit(self.task.task_id, False, "Render cancelled by user.")
+                self.finished_signal.emit(self.task.task_id, False, "Render cancelled by user.")
             elif return_code == 0:
                 self.progress_changed.emit(
                     self.task.task_id, self.task.total_frames, self.task.total_frames, 100.0, "Completed!"
                 )
-                self.finished.emit(self.task.task_id, True, "Render finished successfully!")
+                self.finished_signal.emit(self.task.task_id, True, "Render finished successfully!")
             else:
-                self.finished.emit(
+                self.finished_signal.emit(
                     self.task.task_id, False, f"Inference exited with code {return_code}"
                 )
 
         except Exception as e:
-            self.finished.emit(self.task.task_id, False, f"Execution error: {e}")
+            self.finished_signal.emit(self.task.task_id, False, f"Execution error: {e}")
 
 
 from gui.managers.weights_manager import WeightsDownloadWorker as WeightDownloader

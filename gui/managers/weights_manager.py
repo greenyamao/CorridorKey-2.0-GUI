@@ -15,7 +15,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Tuple, List
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QThread
 
 APP_ROOT = Path(__file__).resolve().parent.parent.parent
 WEIGHTS_DIR = APP_ROOT / "weights"
@@ -95,7 +95,7 @@ class WeightsManager:
                             pass
 
 
-class WeightsDownloadWorker(QObject):
+class WeightsDownloadWorker(QThread):
     """
     Background worker that runs the download script with resume support,
     skipping completed files and emitting live telemetry for both current
@@ -104,10 +104,10 @@ class WeightsDownloadWorker(QObject):
     progress_received = Signal(str)
     progress_updated = Signal(float, str, str)  # current_pct, stage_info, speed_eta
     overall_progress_updated = Signal(float, str, str)  # overall_pct (0-100), stage_title, size_stats
-    finished = Signal(bool, str)
+    download_finished = Signal(bool, str)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self._process: Optional[subprocess.Popen] = None
         self._is_stopped: bool = False
 
@@ -119,7 +119,12 @@ class WeightsDownloadWorker(QObject):
             except Exception:
                 pass
             try:
-                self._process.wait(timeout=1.0)
+                if self._process.stdout:
+                    self._process.stdout.close()
+            except Exception:
+                pass
+            try:
+                self._process.wait(timeout=0.5)
             except Exception:
                 pass
 
@@ -132,7 +137,7 @@ class WeightsDownloadWorker(QObject):
         engine_dir = EngineManager.get_engine_dir()
         engine_script = engine_dir / "scripts" / "download_weights.py"
         if not engine_script.is_file():
-            self.finished.emit(False, "Engine scripts not found. Please download engine or link your existing CorridorKey folder first.")
+            self.download_finished.emit(False, "Engine scripts not found. Please download engine or link your existing CorridorKey folder first.")
             return
 
         # Prepare resilient execution command passing --package_root pointing to APP_ROOT
@@ -294,7 +299,7 @@ class WeightsDownloadWorker(QObject):
                     buf.extend(b)
 
             if self._is_stopped:
-                self.finished.emit(False, "Download canceled by user.")
+                self.download_finished.emit(False, "Download canceled by user.")
                 return
 
             ret = self._process.wait()
@@ -305,9 +310,9 @@ class WeightsDownloadWorker(QObject):
                     f"{total_mb / 1000.0:.2f} GB / {total_mb / 1000.0:.2f} GB (100%)"
                 )
                 self.progress_updated.emit(100.0, "All models verified and ready!", "")
-                self.finished.emit(True, "All models downloaded and ready!")
+                self.download_finished.emit(True, "All models downloaded and ready!")
             else:
-                self.finished.emit(False, f"Download failed with code {ret}")
+                self.download_finished.emit(False, f"Download failed with code {ret}")
         except Exception as e:
             if not self._is_stopped:
-                self.finished.emit(False, str(e))
+                self.download_finished.emit(False, str(e))

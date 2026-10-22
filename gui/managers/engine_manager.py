@@ -98,6 +98,29 @@ class EngineManager:
 
         for name, target in [("weights", weights_dir), ("vfms", vfms_dir)]:
             engine_link = engine_dir / name
+            
+            # Check if engine_link is already a valid junction or symlink
+            is_linked = False
+            try:
+                if hasattr(engine_link, "is_junction") and engine_link.is_junction():
+                    is_linked = True
+                elif engine_link.is_symlink():
+                    is_linked = True
+            except Exception:
+                pass
+
+            if is_linked:
+                continue
+
+            # If it's a directory containing only .gitkeep or empty, safely replace with junction
+            if engine_link.is_dir():
+                real_files = [f for f in engine_link.rglob("*") if f.is_file() and f.name != ".gitkeep"]
+                if not real_files:
+                    try:
+                        shutil.rmtree(engine_link)
+                    except Exception as e:
+                        print(f"[EngineManager] Could not remove empty dir {engine_link}: {e}")
+
             if not engine_link.exists():
                 try:
                     if sys.platform == "win32":

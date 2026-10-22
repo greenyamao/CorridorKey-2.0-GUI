@@ -25,6 +25,15 @@ renders/
 output/
 temp/
 *.log
+corridorkey_gui.log
+corridorkey_crash.log
+
+# User test media
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.exr
 
 # Python cache & virtual environments
 __pycache__/

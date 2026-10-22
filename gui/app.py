@@ -173,26 +173,20 @@ class WeightDownloadDialog(QDialog):
         btn_row.addWidget(self.btn_close)
         layout.addLayout(btn_row)
 
-        self.thread = QThread()
-        self.worker = WeightDownloader()
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
-        self.worker.progress_received.connect(self._on_progress, Qt.ConnectionType.QueuedConnection)
-        self.worker.progress_updated.connect(self._on_progress_update, Qt.ConnectionType.QueuedConnection)
-        self.worker.overall_progress_updated.connect(self._on_overall_progress_update, Qt.ConnectionType.QueuedConnection)
-        self.worker.finished.connect(self._on_finished, Qt.ConnectionType.QueuedConnection)
-        self.thread.start()
+        self.worker = WeightDownloader(parent=self)
+        self.worker.progress_received.connect(self._on_progress)
+        self.worker.progress_updated.connect(self._on_progress_update)
+        self.worker.overall_progress_updated.connect(self._on_overall_progress_update)
+        self.worker.download_finished.connect(self._on_finished)
+        self.worker.start()
 
     def _cancel_and_close(self):
         if hasattr(self, 'worker') and self.worker is not None:
             self.worker.stop()
-        if hasattr(self, 'thread') and self.thread is not None and self.thread.isRunning():
-            self.thread.quit()
-            if QThread.currentThread() != self.thread:
-                self.thread.wait(1000)
-                if self.thread.isRunning():
-                    self.thread.terminate()
-                    self.thread.wait(300)
+            if self.worker.isRunning():
+                if not self.worker.wait(2000):
+                    self.worker.terminate()
+                    self.worker.wait(1000)
 
     def _on_close_clicked(self):
         self._cancel_and_close()
@@ -227,8 +221,6 @@ class WeightDownloadDialog(QDialog):
             self.lbl_overall_stats.setText(stats)
 
     def _on_finished(self, success: bool, msg: str):
-        if hasattr(self, 'thread') and self.thread is not None and self.thread.isRunning():
-            self.thread.quit()
         self.pbar.setValue(100 if success else 0)
         self.log_view.append(f"\nStatus: {msg}")
         self.btn_close.setText("Close")
@@ -262,7 +254,7 @@ class MainWindow(QMainWindow):
         self.render_queue: List[RenderTask] = []
         self.queue_items_map: Dict[str, Any] = {}
         self.active_runner: Optional[RenderRunner] = None
-        self.active_thread: Optional[QThread] = None
+        self._current_rendering_path: str = ""
 
         self._init_ui()
         self._setup_shortcuts()
@@ -734,6 +726,8 @@ class MainWindow(QMainWindow):
         self.render_queue.clear()
         if self.active_runner is not None:
             self.active_runner.cancel()
+            if self.active_runner.isRunning():
+                self.active_runner.wait(500)
         self.media_panel.set_batch_running(False)
         self.lbl_status.setText("Batch Stopped")
 
@@ -749,48 +743,39 @@ class MainWindow(QMainWindow):
         self._start_render(next_task)
 
     def _start_render(self, task: RenderTask):
+        self._current_rendering_path = task.clip_path
         self.media_panel.set_clip_status(task.clip_path, "Rendering", 0.0)
         self.lbl_status.setText(f"Rendering: {task.clip_name}")
         self.lbl_status.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 11px; font-weight: 600;")
 
         self.inspector.btn_render.setEnabled(False)
 
-        self.active_thread = QThread()
-        self.active_runner = RenderRunner(task)
-        self.active_runner.moveToThread(self.active_thread)
+        self.active_runner = RenderRunner(task, parent=self)
+        self.active_runner.progress_changed.connect(self._on_render_progress)
+        self.active_runner.finished_signal.connect(self._on_render_finished)
+        self.active_runner.start()
 
-        self.active_thread.started.connect(self.active_runner.run)
-        self.active_runner.progress_changed.connect(
-            lambda tid, cur, tot, pct, status: self._on_render_progress(task.clip_path, pct, status),
-            Qt.ConnectionType.QueuedConnection
-        )
-        self.active_runner.finished.connect(
-            lambda tid, success, msg: self._on_render_finished(task.clip_path, success, msg),
-            Qt.ConnectionType.QueuedConnection
-        )
-
-        self.active_thread.start()
-
-    def _on_render_progress(self, clip_path: str, pct: float, status: str):
-        self.media_panel.set_clip_status(clip_path, "Rendering", pct)
+    def _on_render_progress(self, task_id: str, cur: int, tot: int, pct: float, status: str):
+        if self._current_rendering_path:
+            self.media_panel.set_clip_status(self._current_rendering_path, "Rendering", pct)
         self.lbl_status.setText(status)
 
-    def _on_render_finished(self, clip_path: str, success: bool, msg: str):
+    def _on_render_finished(self, task_id: str, success: bool, msg: str):
         self.inspector.btn_render.setEnabled(True)
-        self.media_panel.set_clip_status(clip_path, "Done" if success else "Error")
+        clip_path = self._current_rendering_path
+        if clip_path:
+            self.media_panel.set_clip_status(clip_path, "Done" if success else "Error")
 
         if success:
-            self.lbl_status.setText(f"Done: {Path(clip_path).name}")
+            clip_name = Path(clip_path).name if clip_path else "Task"
+            self.lbl_status.setText(f"Done: {clip_name}")
             self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
         else:
             self.lbl_status.setText(f"Error: {msg}")
             self.lbl_status.setStyleSheet("color: #FF5252; font-size: 11px; font-weight: 600;")
 
-        if self.active_thread is not None and self.active_thread.isRunning():
-            self.active_thread.quit()
-            if QThread.currentThread() != self.active_thread:
-                self.active_thread.wait(1000)
-        self.active_thread = None
+        if self.active_runner is not None and self.active_runner.isRunning():
+            self.active_runner.wait(500)
         self.active_runner = None
 
         if self.render_queue:
@@ -799,6 +784,14 @@ class MainWindow(QMainWindow):
             self.media_panel.set_batch_running(False)
             if success:
                 QMessageBox.information(self, "Rendering Finished", "All render tasks completed successfully!")
+
+    def closeEvent(self, event):
+        if self.active_runner is not None and self.active_runner.isRunning():
+            self.active_runner.cancel()
+            self.active_runner.wait(1000)
+        if self.active_reader is not None:
+            self.active_reader.close()
+        event.accept()
 
     # Drag and Drop support
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -825,6 +818,12 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    try:
+        from gui.backend.logger import setup_logging
+        setup_logging()
+    except Exception as e:
+        print(f"[Warning] Could not initialize logger: {e}")
+
     setTheme(Theme.DARK)
     app = QApplication(sys.argv)
     app.setStyleSheet(DARK_WORKBENCH_QSS)

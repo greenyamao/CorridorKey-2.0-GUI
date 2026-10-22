@@ -43,5 +43,10 @@ def ensure_environment():
 
 if __name__ == "__main__":
     ensure_environment()
+    try:
+        from gui.backend.logger import setup_logging
+        setup_logging()
+    except Exception as e:
+        print(f"[Warning] Could not initialize logger: {e}")
     from gui.app import main
     sys.exit(main())

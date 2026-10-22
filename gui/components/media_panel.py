@@ -15,8 +15,9 @@ from PySide6.QtWidgets import (
     QFrame,
     QFileDialog,
     QProgressBar,
+    QSizePolicy,
 )
-from PySide6.QtGui import QFont, QCursor
+from PySide6.QtGui import QFont, QCursor, QPainter
 from qfluentwidgets import FluentIcon as FI, Theme
 
 from gui.backend.video_loader import ClipInfo, probe_clip, scan_directory_for_clips
@@ -26,6 +27,31 @@ from gui.styles.theme import (
     CORRIDOR_GREEN,
     TEXT_MUTED,
 )
+
+
+class ElidedLabel(QLabel):
+    """A QLabel that gracefully truncates and elides overflowing text with '...' in the middle."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(30)
+
+    def setText(self, text: str):
+        self._full_text = text
+        super().setText(text)
+        self.update()
+
+    def text(self) -> str:
+        return self._full_text
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        metrics = painter.fontMetrics()
+        elided = metrics.elidedText(self._full_text, Qt.TextElideMode.ElideMiddle, self.width())
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(self.rect(), self.alignment() | Qt.AlignmentFlag.AlignVCenter, elided)
 
 
 class ClipRow(QFrame):
@@ -58,7 +84,7 @@ class ClipRow(QFrame):
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(6)
 
-        self.name_lbl = QLabel(clip.name)
+        self.name_lbl = ElidedLabel(clip.name)
         self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 600; border: none; background: transparent;")
         top_row.addWidget(self.name_lbl, stretch=1)
 
@@ -242,6 +268,8 @@ class MediaPanel(QWidget):
         # 2. Scroll Area for Clips
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll.setStyleSheet("border: none; background: transparent;")
 
         self.list_widget = QWidget(self.scroll)
