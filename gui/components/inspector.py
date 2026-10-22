@@ -154,6 +154,7 @@ class InspectorPanel(QFrame):
     download_weights_requested = Signal()
     hint_changed = Signal(str)
     despill_changed = Signal(float)
+    despill_color_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -495,13 +496,20 @@ class InspectorPanel(QFrame):
         dc_box.setSpacing(6)
         lbl_dc = QLabel("Screen Color:")
         lbl_dc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_dc = "<b>Screen Color</b><br>Backdrop color (Green or Blue) to neutralize spill reflections from."
+        tip_dc = (
+            "<b>Screen Color</b><br>"
+            "Backdrop color to neutralize spill reflections from.<br>"
+            "&bull; <b>Auto</b>: automatically samples frame edges to detect green or blue screen.<br>"
+            "&bull; <b>Green</b>: suppresses green bounce on hair and edges.<br>"
+            "&bull; <b>Blue</b>: suppresses blue bounce on hair and edges."
+        )
         lbl_dc.setToolTip(tip_dc)
         dc_box.addWidget(lbl_dc)
 
         self.cmb_despill_color = ComboBox()
-        self.cmb_despill_color.addItems(["Green", "Blue"])
+        self.cmb_despill_color.addItems(["Auto", "Green", "Blue"])
         self.cmb_despill_color.setToolTip(tip_dc)
+        self.cmb_despill_color.currentTextChanged.connect(self.despill_color_changed.emit)
         dc_box.addWidget(self.cmb_despill_color, stretch=1)
         layout.addLayout(dc_box)
 

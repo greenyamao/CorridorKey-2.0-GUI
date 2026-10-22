@@ -43,6 +43,10 @@ class ViewportWidget(QWidget):
         self.channel_mode = "Composite"  # "Composite", "Alpha", "Foreground", "Original"
         self.wipe_split = 0.5  # 0.0 to 1.0
         self.despill_strength = 0.5  # 0.0 to 1.0
+        self.despill_color = "auto"  # "auto", "green", "blue"
+
+        self._raw_rgb: Optional[np.ndarray] = None
+        self._raw_alpha: Optional[np.ndarray] = None
 
         self.setToolTip(
             "<b>Viewport</b><br>"
@@ -82,6 +86,8 @@ class ViewportWidget(QWidget):
     ):
         """Update active frames from numpy arrays with high-performance C++ OpenCV SIMD operations."""
         if rgb_frame is None:
+            self._raw_rgb = None
+            self._raw_alpha = None
             self._current_frame = None
             self._original_frame = None
             self._alpha_frame = None
@@ -93,6 +99,8 @@ class ViewportWidget(QWidget):
         rgb_frame = np.ascontiguousarray(rgb_frame)
         if rgb_frame.dtype != np.uint8:
             rgb_frame = np.clip(rgb_frame, 0, 255).astype(np.uint8)
+
+        self._raw_rgb = rgb_frame
 
         h, w, c = rgb_frame.shape
         self._current_frame = QImage(
@@ -117,49 +125,62 @@ class ViewportWidget(QWidget):
                 a = alpha_matte
             if a.dtype != np.uint8:
                 a = (np.clip(a, 0.0, 1.0) * 255).astype(np.uint8)
-
             if a.shape[:2] == (h, w):
-                a = np.ascontiguousarray(a)
-                need_wipe_or_sbs = self.display_mode in ("Wipe", "Side by side")
+                self._raw_alpha = np.ascontiguousarray(a)
+            else:
+                self._raw_alpha = None
+        else:
+            self._raw_alpha = None
 
-                # 1. Grayscale Alpha Mask (only when needed)
-                if self.channel_mode == "Alpha" or need_wipe_or_sbs:
-                    self._alpha_frame = QImage(
-                        a.data, w, h, w, QImage.Format.Format_Grayscale8
-                    ).copy()
-                else:
-                    self._alpha_frame = None
+        self._recompute_derived_frames()
+        self.update()
 
-                despilled_rgb = self._apply_despill(rgb_frame, self.despill_strength)
+    def _recompute_derived_frames(self):
+        """Recompute Composite, Cutout FG, and Alpha using current despill and channel settings."""
+        if self._raw_rgb is None:
+            return
 
-                # 2. RGBA Composite (SIMD cv2.cvtColor + alpha channel assignment)
-                if self.channel_mode == "Composite" or need_wipe_or_sbs:
-                    rgba = cv2.cvtColor(despilled_rgb, cv2.COLOR_RGB2RGBA)
-                    rgba[:, :, 3] = a
-                    self._composite_frame = QImage(
-                        rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888
-                    ).copy()
-                else:
-                    self._composite_frame = self._current_frame
+        rgb_frame = self._raw_rgb
+        h, w, c = rgb_frame.shape
+        a = self._raw_alpha
 
-                # 3. Cutout Foreground (SIMD bitwise mask)
-                if self.channel_mode == "Foreground" or need_wipe_or_sbs:
-                    fg = cv2.bitwise_and(despilled_rgb, despilled_rgb, mask=a)
-                    self._fg_frame = QImage(
-                        fg.data, w, h, w * 3, QImage.Format.Format_RGB888
-                    ).copy()
-                else:
-                    self._fg_frame = self._current_frame
+        if a is not None and a.shape[:2] == (h, w):
+            need_wipe_or_sbs = self.display_mode in ("Wipe", "Side by side")
+
+            # 1. Grayscale Alpha Mask (only when needed)
+            if self.channel_mode == "Alpha" or need_wipe_or_sbs:
+                self._alpha_frame = QImage(
+                    a.data, w, h, w, QImage.Format.Format_Grayscale8
+                ).copy()
             else:
                 self._alpha_frame = None
+
+            despilled_rgb = self._apply_despill(
+                rgb_frame, self.despill_strength, self.despill_color
+            )
+
+            # 2. RGBA Composite (SIMD cv2.cvtColor + alpha channel assignment)
+            if self.channel_mode == "Composite" or need_wipe_or_sbs:
+                rgba = cv2.cvtColor(despilled_rgb, cv2.COLOR_RGB2RGBA)
+                rgba[:, :, 3] = a
+                self._composite_frame = QImage(
+                    rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888
+                ).copy()
+            else:
                 self._composite_frame = self._current_frame
+
+            # 3. Cutout Foreground (SIMD bitwise mask)
+            if self.channel_mode == "Foreground" or need_wipe_or_sbs:
+                fg = cv2.bitwise_and(despilled_rgb, despilled_rgb, mask=a)
+                self._fg_frame = QImage(
+                    fg.data, w, h, w * 3, QImage.Format.Format_RGB888
+                ).copy()
+            else:
                 self._fg_frame = self._current_frame
         else:
             self._alpha_frame = None
             self._composite_frame = self._current_frame
             self._fg_frame = self._current_frame
-
-        self.update()
 
     def reset_view(self):
         """Reset zoom and pan to fit viewport."""
@@ -169,29 +190,68 @@ class ViewportWidget(QWidget):
 
     def set_channel_mode(self, mode: str):
         self.channel_mode = mode
+        self._recompute_derived_frames()
         self.update()
 
     def set_display_mode(self, mode: str):
         self.display_mode = mode
+        self._recompute_derived_frames()
         self.update()
 
     def set_despill_strength(self, strength: float):
         self.despill_strength = max(0.0, min(1.0, float(strength)))
+        self._recompute_derived_frames()
+        self.update()
+
+    def set_despill_color(self, color: str):
+        self.despill_color = str(color).strip().lower()
+        self._recompute_derived_frames()
         self.update()
 
     @staticmethod
-    def _apply_despill(rgb: np.ndarray, strength: float = 0.5) -> np.ndarray:
+    def _apply_despill(
+        rgb: np.ndarray, strength: float = 0.5, color: str = "auto"
+    ) -> np.ndarray:
         if strength <= 0.0 or rgb is None:
             return rgb
         r = rgb[:, :, 0].astype(np.float32)
         g = rgb[:, :, 1].astype(np.float32)
         b = rgb[:, :, 2].astype(np.float32)
-        spill = np.maximum(0.0, g - (r + b) * 0.5)
-        if float(spill.max()) <= 1e-3:
-            return rgb
-        full_r = np.clip(r + spill * 0.5, 0.0, 255.0)
-        full_g = np.clip(g - spill, 0.0, 255.0)
-        full_b = np.clip(b + spill * 0.5, 0.0, 255.0)
+
+        mode = (color or "auto").strip().lower()
+        if mode == "auto":
+            # Sample boundary frame edges to detect whether green or blue screen is predominant
+            h, w = rgb.shape[:2]
+            border = max(2, min(h, w) // 25)
+            edge_g = (
+                g[:border, :].mean()
+                + g[-border:, :].mean()
+                + g[:, :border].mean()
+                + g[:, -border:].mean()
+            ) / 4.0
+            edge_b = (
+                b[:border, :].mean()
+                + b[-border:, :].mean()
+                + b[:, :border].mean()
+                + b[:, -border:].mean()
+            ) / 4.0
+            mode = "blue" if edge_b > edge_g else "green"
+
+        if mode == "blue":
+            spill = np.maximum(0.0, b - (r + g) * 0.5)
+            if float(spill.max()) <= 1e-3:
+                return rgb
+            full_r = np.clip(r + spill * 0.5, 0.0, 255.0)
+            full_g = np.clip(g + spill * 0.5, 0.0, 255.0)
+            full_b = np.clip(b - spill, 0.0, 255.0)
+        else:  # "green"
+            spill = np.maximum(0.0, g - (r + b) * 0.5)
+            if float(spill.max()) <= 1e-3:
+                return rgb
+            full_r = np.clip(r + spill * 0.5, 0.0, 255.0)
+            full_g = np.clip(g - spill, 0.0, 255.0)
+            full_b = np.clip(b + spill * 0.5, 0.0, 255.0)
+
         if strength >= 1.0:
             return np.stack([full_r, full_g, full_b], axis=-1).astype(np.uint8)
         out_r = np.clip(r * (1.0 - strength) + full_r * strength, 0.0, 255.0)
