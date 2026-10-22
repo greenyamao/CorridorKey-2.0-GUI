@@ -633,7 +633,7 @@ class InspectorPanel(QFrame):
         passes_grid.addWidget(self.chk_out_cutout)
 
         self.chk_out_alpha = CheckBox("Alpha (Matte)")
-        self.chk_out_alpha.setChecked(False)
+        self.chk_out_alpha.setChecked(True)
         self.chk_out_alpha.setToolTip(
             "<b>Alpha Matte Pass (MP4)</b><br>"
             "Black & white silhouette matte (white is subject, black is background) for compositing and live viewport preview."
@@ -788,19 +788,11 @@ class InspectorPanel(QFrame):
     def set_clip(self, clip: Optional[ClipInfo]):
         self.current_clip = clip
         if clip is not None:
-            if clip.discovered_hint_path:
-                self.hint_file_path = clip.discovered_hint_path
-                self.txt_hint_path.setText(os.path.basename(clip.discovered_hint_path))
-                self.txt_hint_path.setToolTip(clip.discovered_hint_path)
-                if clip.discovered_hint_mode == "first_frame":
-                    self.cmb_hint_frames.setCurrentIndex(1)
-                else:
-                    self.cmb_hint_frames.setCurrentIndex(2)
-            else:
-                self.hint_file_path = ""
-                self.cmb_hint_frames.setCurrentIndex(0)
-                self.txt_hint_path.setText("None (Auto Segmentation)")
-                self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
+            # Clean Slate: Always default to Auto (No Hint) when loading clips
+            self.hint_file_path = ""
+            self.cmb_hint_frames.setCurrentIndex(0)
+            self.txt_hint_path.setText("None (Auto Segmentation)")
+            self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
         self._recalc_vram()
 
     def _on_despill_slider_changed(self, v: int):
@@ -1154,7 +1146,7 @@ class InspectorPanel(QFrame):
         if settings.contains("out_cutout"):
             self.chk_out_cutout.setChecked(settings.value("out_cutout", True, type=bool))
         if settings.contains("out_alpha"):
-            self.chk_out_alpha.setChecked(settings.value("out_alpha", False, type=bool))
+            self.chk_out_alpha.setChecked(settings.value("out_alpha", True, type=bool))
         if settings.contains("out_fg"):
             self.chk_out_fg.setChecked(settings.value("out_fg", False, type=bool))
         if settings.contains("out_checker"):

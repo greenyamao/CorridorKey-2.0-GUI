@@ -246,19 +246,19 @@ class MediaPanel(QWidget):
         head_row.addWidget(self.lbl_title)
         head_row.addStretch()
 
-        btn_add_f = QPushButton("+ File")
+        btn_add_f = QPushButton("File")
         btn_add_f.setIcon(FI.DOCUMENT.icon(Theme.DARK))
         btn_add_f.setIconSize(QSize(12, 12))
         btn_add_f.setProperty("class", "pill-btn")
-        btn_add_f.setToolTip("<b>+ File (Ctrl+O)</b><br>Open video file (MP4, MOV, MKV, AVI) or first frame of an image sequence.")
+        btn_add_f.setToolTip("<b>File (Ctrl+O)</b><br>Open video file (MP4, MOV, MKV, AVI) or first frame of an image sequence.")
         btn_add_f.clicked.connect(self._on_import_file)
         head_row.addWidget(btn_add_f)
 
-        btn_add_dir = QPushButton("+ Folder")
+        btn_add_dir = QPushButton("Folder")
         btn_add_dir.setIcon(FI.FOLDER.icon(Theme.DARK))
         btn_add_dir.setIconSize(QSize(12, 12))
         btn_add_dir.setProperty("class", "pill-btn")
-        btn_add_dir.setToolTip("<b>+ Folder (Ctrl+Shift+O)</b><br>Scan folder for videos or load an image sequence directory.")
+        btn_add_dir.setToolTip("<b>Folder (Ctrl+Shift+O)</b><br>Scan folder for videos or load an image sequence directory.")
         btn_add_dir.clicked.connect(self._on_import_folder)
         head_row.addWidget(btn_add_dir)
 
@@ -285,7 +285,7 @@ class MediaPanel(QWidget):
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.setSpacing(4)
 
-        self.lbl_empty = QLabel("No clips added.\nClick '+ File', '+ Folder', or drag & drop video here.")
+        self.lbl_empty = QLabel("No clips added.\nClick 'File', 'Folder', or drag & drop video here.")
         self.lbl_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_empty.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 20px; border: none; background: transparent;")
         self.list_layout.addWidget(self.lbl_empty)

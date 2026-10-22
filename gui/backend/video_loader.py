@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 import cv2
 import numpy as np
+import subprocess
 
 
 class ClipInfo:
@@ -44,6 +45,100 @@ class ClipInfo:
         return f"{self.width}x{self.height}"
 
 
+class StreamingFFmpegReader:
+    """High-performance streaming raw RGBA reader using a persistent FFmpeg pipe."""
+
+    def __init__(self, video_path: str, width: int, height: int, fps: float, total_frames: int):
+        self.video_path = video_path
+        self.width = width
+        self.height = height
+        self.fps = max(1.0, fps)
+        self.total_frames = max(1, total_frames)
+        self.frame_bytes = width * height * 4
+        self.proc: Optional[subprocess.Popen] = None
+        self.current_pipe_frame = -1
+        self._cache: Dict[int, np.ndarray] = {}
+        self._max_cache = 48
+
+    def _start_pipe_at(self, frame_idx: int):
+        self._close_pipe()
+        seek_sec = frame_idx / self.fps
+        cmd = [
+            "ffmpeg",
+            "-ss", f"{seek_sec:.4f}",
+            "-i", self.video_path,
+            "-f", "rawvideo",
+            "-pix_fmt", "rgba",
+            "-",
+        ]
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=self.frame_bytes * 8,
+            )
+            self.current_pipe_frame = frame_idx
+        except Exception:
+            self.proc = None
+            self.current_pipe_frame = -1
+
+    def _close_pipe(self):
+        if self.proc is not None:
+            try:
+                if self.proc.stdout:
+                    self.proc.stdout.close()
+                self.proc.terminate()
+                self.proc.kill()
+            except Exception:
+                pass
+            self.proc = None
+        self.current_pipe_frame = -1
+
+    def get_frame(self, index: int) -> Optional[np.ndarray]:
+        index = max(0, min(index, self.total_frames - 1))
+        if index in self._cache:
+            return self._cache[index]
+
+        if self.proc is None or index != self.current_pipe_frame:
+            # If jumping ahead by 1 to 4 frames sequentially, read through without restarting pipe
+            if self.proc is not None and 0 < (index - self.current_pipe_frame) <= 4:
+                while self.current_pipe_frame < index:
+                    try:
+                        raw = self.proc.stdout.read(self.frame_bytes)
+                        if len(raw) < self.frame_bytes:
+                            self._start_pipe_at(index)
+                            break
+                        self.current_pipe_frame += 1
+                    except Exception:
+                        self._start_pipe_at(index)
+                        break
+            else:
+                self._start_pipe_at(index)
+
+        if self.proc is None or self.proc.stdout is None:
+            return None
+
+        try:
+            raw = self.proc.stdout.read(self.frame_bytes)
+            if len(raw) < self.frame_bytes:
+                return None
+            arr = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 4))
+            self.current_pipe_frame += 1
+
+            if len(self._cache) >= self._max_cache:
+                oldest = next(iter(self._cache))
+                del self._cache[oldest]
+            self._cache[index] = arr
+            return arr
+        except Exception:
+            return None
+
+    def close(self):
+        self._close_pipe()
+        self._cache.clear()
+
+
 class VideoReader:
     """Manages random-access frame reading and thumbnail caching."""
 
@@ -56,6 +151,7 @@ class VideoReader:
         self._last_index = -1
         self._frame_cache: Dict[int, np.ndarray] = {}  # index -> RGB frame
         self._max_cache = 64
+        self._streaming_mov_reader: Optional[StreamingFFmpegReader] = None
 
     def open(self) -> bool:
         if not self.clip.is_frame_dir:
@@ -67,9 +163,10 @@ class VideoReader:
         if self.cap is not None:
             self.cap.release()
             self.cap = None
+        if self._streaming_mov_reader is not None:
+            self._streaming_mov_reader.close()
+            self._streaming_mov_reader = None
         self._frame_cache.clear()
-        if hasattr(self, "_rgba_cache"):
-            self._rgba_cache.clear()
         self._last_index = -1
 
     def get_frame(self, index: int) -> Optional[np.ndarray]:
@@ -112,39 +209,20 @@ class VideoReader:
         return rgb
 
     def get_rgba_frame(self, index: int) -> Optional[np.ndarray]:
-        """Fetch frame as RGBA uint8 array, decoding embedded alpha channel from video containers (e.g. ProRes 4444)."""
+        """Fetch frame as RGBA uint8 array, streaming embedded alpha from ProRes 4444 containers."""
         index = max(0, min(index, self.clip.total_frames - 1))
-        if hasattr(self, "_rgba_cache") and index in self._rgba_cache:
-            return self._rgba_cache[index]
+        if self._streaming_mov_reader is None:
+            self._streaming_mov_reader = StreamingFFmpegReader(
+                self.clip.path,
+                self.clip.width,
+                self.clip.height,
+                self.clip.fps,
+                self.clip.total_frames,
+            )
 
-        if not hasattr(self, "_rgba_cache"):
-            self._rgba_cache: Dict[int, np.ndarray] = {}
-
-        # Decode directly using FFmpeg pipe with precise timestamp seek
-        try:
-            import subprocess
-            seek_sec = index / max(1.0, self.clip.fps)
-            cmd = [
-                "ffmpeg",
-                "-ss", f"{seek_sec:.4f}",
-                "-i", self.clip.path,
-                "-vframes", "1",
-                "-f", "rawvideo",
-                "-pix_fmt", "rgba",
-                "-",
-            ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            out, _ = proc.communicate()
-            expected = self.clip.width * self.clip.height * 4
-            if len(out) >= expected:
-                arr = np.frombuffer(out[:expected], dtype=np.uint8).reshape((self.clip.height, self.clip.width, 4))
-                if len(self._rgba_cache) >= self._max_cache:
-                    oldest = next(iter(self._rgba_cache))
-                    del self._rgba_cache[oldest]
-                self._rgba_cache[index] = arr
-                return arr
-        except Exception:
-            pass
+        frame = self._streaming_mov_reader.get_frame(index)
+        if frame is not None:
+            return frame
 
         # Fallback to get_frame + opaque alpha
         rgb = self.get_frame(index)

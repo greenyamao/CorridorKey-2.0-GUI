@@ -256,6 +256,7 @@ class MainWindow(QMainWindow):
         self.active_runner: Optional[RenderRunner] = None
         self.rendered_alpha_reader: Optional[VideoReader] = None
         self.rendered_fg_reader: Optional[VideoReader] = None
+        self.rendered_checker_reader: Optional[VideoReader] = None
         self._last_rendered_out_dir: str = ""
         self._current_rendering_path: str = ""
         self._current_task_output_dir: str = ""
@@ -681,26 +682,28 @@ class MainWindow(QMainWindow):
 
         found_alpha: Optional[Path] = None
         found_fg: Optional[Path] = None
+        found_checker: Optional[Path] = None
         target_dir: Optional[Path] = None
 
         for d in possible_dirs:
             if not d.is_dir():
                 continue
-            cutout_candidates = list(d.glob(f"{stem}_cutout.*")) or list(d.glob("*_cutout.*"))
             alpha_candidates = list(d.glob(f"{stem}_alpha.*")) or list(d.glob("*_alpha.*"))
             checker_candidates = list(d.glob(f"{stem}_checker*.*")) or list(d.glob("*_checker*.*"))
             fg_candidates = list(d.glob(f"{stem}_fg.*")) or list(d.glob("*_fg.*"))
+            cutout_candidates = list(d.glob(f"{stem}_cutout.*")) or list(d.glob("*_cutout.*"))
 
             if cutout_candidates or alpha_candidates or checker_candidates or fg_candidates:
                 target_dir = d
                 if alpha_candidates:
                     found_alpha = alpha_candidates[0]
-                if cutout_candidates:
-                    found_fg = cutout_candidates[0]
-                elif checker_candidates:
-                    found_fg = checker_candidates[0]
-                elif fg_candidates:
+                if checker_candidates:
+                    found_checker = checker_candidates[0]
+                # For foreground: prefer H.264 _fg.mp4 (400+ FPS), fallback to ProRes MOV only if no checker MP4 preview exists
+                if fg_candidates:
                     found_fg = fg_candidates[0]
+                elif cutout_candidates and not found_checker:
+                    found_fg = cutout_candidates[0]
                 break
 
         loaded_any = False
@@ -709,6 +712,13 @@ class MainWindow(QMainWindow):
                 self.rendered_alpha_reader.close()
             self.rendered_alpha_reader = VideoReader(probe_clip(str(found_alpha)))
             self.rendered_alpha_reader.open()
+            loaded_any = True
+
+        if found_checker and found_checker.is_file():
+            if self.rendered_checker_reader is not None:
+                self.rendered_checker_reader.close()
+            self.rendered_checker_reader = VideoReader(probe_clip(str(found_checker)))
+            self.rendered_checker_reader.open()
             loaded_any = True
 
         if found_fg and found_fg.is_file():
@@ -735,27 +745,39 @@ class MainWindow(QMainWindow):
 
         alpha_matte = None
         fg_rgb = orig_rgb
+        composite_override = None
 
-        # If we have a rendered foreground reader (such as cutout.mov):
+        # 1. High-speed alpha matte reader (OpenCV from _alpha.mp4): 400+ FPS
+        if self.rendered_alpha_reader is not None:
+            a_frame = self.rendered_alpha_reader.get_frame(frame_idx)
+            if a_frame is not None:
+                alpha_matte = a_frame[:, :, 0] if a_frame.ndim == 3 else a_frame
+
+        # 2. Foreground reader (H.264 _fg.mp4 at 400+ FPS, or streaming ProRes MOV at 95 FPS):
         if self.rendered_fg_reader is not None:
             if self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
                 rgba = self.rendered_fg_reader.get_rgba_frame(frame_idx)
                 if rgba is not None:
                     fg_rgb = rgba[:, :, :3]
-                    alpha_matte = rgba[:, :, 3]
+                    if alpha_matte is None:
+                        alpha_matte = rgba[:, :, 3]
             else:
                 f_frame = self.rendered_fg_reader.get_frame(frame_idx)
                 if f_frame is not None:
                     fg_rgb = f_frame
 
-        if alpha_matte is None and self.rendered_alpha_reader is not None:
-            a_frame = self.rendered_alpha_reader.get_frame(frame_idx)
-            if a_frame is not None:
-                alpha_matte = a_frame[:, :, 0] if a_frame.ndim == 3 else a_frame
-        elif alpha_matte is None and self._active_hint_mask is not None:
-            alpha_matte = self._active_hint_mask
+        # 3. Direct checker composite reader (OpenCV from _checker_comp.mp4): 400+ FPS
+        if alpha_matte is None and self.rendered_checker_reader is not None:
+            c_frame = self.rendered_checker_reader.get_frame(frame_idx)
+            if c_frame is not None:
+                composite_override = c_frame
 
-        self.viewport.set_frames(rgb_frame=fg_rgb, alpha_matte=alpha_matte, original_rgb=orig_rgb)
+        self.viewport.set_frames(
+            rgb_frame=fg_rgb,
+            alpha_matte=alpha_matte,
+            original_rgb=orig_rgb,
+            composite_override=composite_override,
+        )
 
     def _release_rendered_readers(self):
         if self.rendered_alpha_reader is not None:
@@ -764,6 +786,9 @@ class MainWindow(QMainWindow):
         if self.rendered_fg_reader is not None:
             self.rendered_fg_reader.close()
             self.rendered_fg_reader = None
+        if self.rendered_checker_reader is not None:
+            self.rendered_checker_reader.close()
+            self.rendered_checker_reader = None
 
     def _on_clip_selected(self, clip: ClipInfo):
         self.current_clip = clip
@@ -778,13 +803,8 @@ class MainWindow(QMainWindow):
         self.timeline.set_clip(clip.total_frames, clip.fps)
         self.inspector.set_clip(clip)
 
-        # Load companion hint mask once and cache in memory for zero-lag playback
+        # Clean slate: Do NOT apply old hint masks to raw video playback
         self._active_hint_mask = None
-        if clip.discovered_hint_path and os.path.exists(clip.discovered_hint_path):
-            ext = Path(clip.discovered_hint_path).suffix.lower()
-            if ext in {".png", ".jpg", ".jpeg", ".exr"}:
-                import cv2
-                self._active_hint_mask = cv2.imread(clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
 
         # Only load rendered outputs if this clip was actually rendered during this session!
         if clip.path in self.session_rendered_clips:

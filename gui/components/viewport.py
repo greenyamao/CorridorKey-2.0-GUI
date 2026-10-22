@@ -83,11 +83,13 @@ class ViewportWidget(QWidget):
         rgb_frame: Optional[np.ndarray],
         alpha_matte: Optional[np.ndarray] = None,
         original_rgb: Optional[np.ndarray] = None,
+        composite_override: Optional[np.ndarray] = None,
     ):
         """Update active frames from numpy arrays with high-performance C++ OpenCV SIMD operations."""
         if rgb_frame is None:
             self._raw_rgb = None
             self._raw_alpha = None
+            self._raw_composite_override = None
             self._current_frame = None
             self._original_frame = None
             self._alpha_frame = None
@@ -101,6 +103,11 @@ class ViewportWidget(QWidget):
             rgb_frame = np.clip(rgb_frame, 0, 255).astype(np.uint8)
 
         self._raw_rgb = rgb_frame
+        if composite_override is not None:
+            composite_override = np.ascontiguousarray(composite_override)
+            if composite_override.dtype != np.uint8:
+                composite_override = np.clip(composite_override, 0, 255).astype(np.uint8)
+        self._raw_composite_override = composite_override
 
         h, w, c = rgb_frame.shape
         self._current_frame = QImage(
@@ -177,6 +184,14 @@ class ViewportWidget(QWidget):
                 ).copy()
             else:
                 self._fg_frame = self._current_frame
+        elif getattr(self, "_raw_composite_override", None) is not None:
+            comp_rgb = self._raw_composite_override
+            ch, cw, cc = comp_rgb.shape
+            self._composite_frame = QImage(
+                comp_rgb.data, cw, ch, cw * cc, QImage.Format.Format_RGB888
+            ).copy()
+            self._alpha_frame = None
+            self._fg_frame = self._composite_frame
         else:
             self._alpha_frame = None
             self._composite_frame = self._current_frame
@@ -287,7 +302,7 @@ class ViewportWidget(QWidget):
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
-                "Drag & drop video clip or click '+ File' to begin",
+                "Drag & drop video clip or click 'File' to begin",
             )
             return
 

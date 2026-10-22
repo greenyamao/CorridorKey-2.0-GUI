@@ -741,20 +741,11 @@ class MaskPainterDialog(QDialog):
         clip_p = Path(self.clip_path)
         stem = clip_p.stem
 
-        # Save next to clip if folder writable, else save in Video cache
-        candidate_dir = clip_p.parent
-        out_path = candidate_dir / f"{stem}FrameHint.png"
-
-        try:
-            # Check write permission
-            test_file = candidate_dir / f".test_perm_{os.getpid()}"
-            test_file.touch()
-            test_file.unlink()
-        except Exception:
-            # Fallback to user Videos directory
-            candidate_dir = Path.home() / "Videos" / "CorridorKey_Hints"
-            candidate_dir.mkdir(parents=True, exist_ok=True)
-            out_path = candidate_dir / f"{stem}FrameHint.png"
+        # Save into application cache directory to avoid polluting the user's source folder
+        import time
+        candidate_dir = Path.home() / "Videos" / "CorridorKey_Hints"
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        out_path = candidate_dir / f"{stem}_FrameHint_{os.getpid()}_{int(time.time())}.png"
 
         # Save QImage mask to disk as standard 8-bit grayscale PNG
         mask_qimg = self.canvas.get_mask_image()
