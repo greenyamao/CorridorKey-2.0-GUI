@@ -42,6 +42,7 @@ class ViewportWidget(QWidget):
         self.display_mode = "Single"  # "Single", "Wipe", "Side by side"
         self.channel_mode = "Composite"  # "Composite", "Alpha", "Foreground", "Original"
         self.wipe_split = 0.5  # 0.0 to 1.0
+        self.despill_strength = 0.5  # 0.0 to 1.0
 
         self.setToolTip(
             "<b>Viewport</b><br>"
@@ -129,9 +130,11 @@ class ViewportWidget(QWidget):
                 else:
                     self._alpha_frame = None
 
+                despilled_rgb = self._apply_despill(rgb_frame, self.despill_strength)
+
                 # 2. RGBA Composite (SIMD cv2.cvtColor + alpha channel assignment)
                 if self.channel_mode == "Composite" or need_wipe_or_sbs:
-                    rgba = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2RGBA)
+                    rgba = cv2.cvtColor(despilled_rgb, cv2.COLOR_RGB2RGBA)
                     rgba[:, :, 3] = a
                     self._composite_frame = QImage(
                         rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888
@@ -141,7 +144,7 @@ class ViewportWidget(QWidget):
 
                 # 3. Cutout Foreground (SIMD bitwise mask)
                 if self.channel_mode == "Foreground" or need_wipe_or_sbs:
-                    fg = cv2.bitwise_and(rgb_frame, rgb_frame, mask=a)
+                    fg = cv2.bitwise_and(despilled_rgb, despilled_rgb, mask=a)
                     self._fg_frame = QImage(
                         fg.data, w, h, w * 3, QImage.Format.Format_RGB888
                     ).copy()
@@ -171,6 +174,30 @@ class ViewportWidget(QWidget):
     def set_display_mode(self, mode: str):
         self.display_mode = mode
         self.update()
+
+    def set_despill_strength(self, strength: float):
+        self.despill_strength = max(0.0, min(1.0, float(strength)))
+        self.update()
+
+    @staticmethod
+    def _apply_despill(rgb: np.ndarray, strength: float = 0.5) -> np.ndarray:
+        if strength <= 0.0 or rgb is None:
+            return rgb
+        r = rgb[:, :, 0].astype(np.float32)
+        g = rgb[:, :, 1].astype(np.float32)
+        b = rgb[:, :, 2].astype(np.float32)
+        spill = np.maximum(0.0, g - (r + b) * 0.5)
+        if float(spill.max()) <= 1e-3:
+            return rgb
+        full_r = np.clip(r + spill * 0.5, 0.0, 255.0)
+        full_g = np.clip(g - spill, 0.0, 255.0)
+        full_b = np.clip(b + spill * 0.5, 0.0, 255.0)
+        if strength >= 1.0:
+            return np.stack([full_r, full_g, full_b], axis=-1).astype(np.uint8)
+        out_r = np.clip(r * (1.0 - strength) + full_r * strength, 0.0, 255.0)
+        out_g = np.clip(g * (1.0 - strength) + full_g * strength, 0.0, 255.0)
+        out_b = np.clip(b * (1.0 - strength) + full_b * strength, 0.0, 255.0)
+        return np.stack([out_r, out_g, out_b], axis=-1).astype(np.uint8)
 
     def _get_active_image(self) -> Optional[QImage]:
         if self.channel_mode == "Original":

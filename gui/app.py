@@ -265,10 +265,10 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._setup_shortcuts()
 
-        # Telemetry timer (update VRAM and disk stats every 3 seconds)
+        # Telemetry timer (update GPU/VRAM and disk stats every 1 second)
         self.sys_timer = QTimer(self)
         self.sys_timer.timeout.connect(self._update_system_stats)
-        self.sys_timer.start(3000)
+        self.sys_timer.start(1000)
         self._update_system_stats()
 
         # Check isolated layers asynchronously
@@ -424,6 +424,7 @@ class MainWindow(QMainWindow):
         self.inspector.render_requested.connect(self._on_render_active_clip)
         self.inspector.download_weights_requested.connect(self._open_weight_downloader)
         self.inspector.hint_changed.connect(self._on_hint_changed)
+        self.inspector.despill_changed.connect(self._on_despill_changed)
         splitter.addWidget(self.inspector)
 
         splitter.setSizes([260, 760, 380])
@@ -685,8 +686,15 @@ class MainWindow(QMainWindow):
             if alpha_candidates:
                 found_alpha = alpha_candidates[0]
                 target_dir = d
+                # Prioritize processed despilled cutout (ProRes 4444), then checker comp, then fg
+                cutout_candidates = list(d.glob(f"{stem}_cutout.*")) or list(d.glob("*_cutout.*"))
+                checker_candidates = list(d.glob(f"{stem}_checker*.*")) or list(d.glob("*_checker*.*"))
                 fg_candidates = list(d.glob(f"{stem}_fg.*")) or list(d.glob("*_fg.*"))
-                if fg_candidates:
+                if cutout_candidates:
+                    found_fg = cutout_candidates[0]
+                elif checker_candidates:
+                    found_fg = checker_candidates[0]
+                elif fg_candidates:
                     found_fg = fg_candidates[0]
                 break
 
@@ -732,17 +740,20 @@ class MainWindow(QMainWindow):
 
         self.viewport.set_frames(rgb_frame=fg_rgb, alpha_matte=alpha_matte, original_rgb=orig_rgb)
 
-    def _on_clip_selected(self, clip: ClipInfo):
-        self.current_clip = clip
-
-        if self.active_reader is not None:
-            self.active_reader.close()
+    def _release_rendered_readers(self):
         if self.rendered_alpha_reader is not None:
             self.rendered_alpha_reader.close()
             self.rendered_alpha_reader = None
         if self.rendered_fg_reader is not None:
             self.rendered_fg_reader.close()
             self.rendered_fg_reader = None
+
+    def _on_clip_selected(self, clip: ClipInfo):
+        self.current_clip = clip
+
+        if self.active_reader is not None:
+            self.active_reader.close()
+        self._release_rendered_readers()
 
         self.active_reader = VideoReader(clip)
         self.active_reader.open()
@@ -780,13 +791,19 @@ class MainWindow(QMainWindow):
                 self._active_hint_mask = cv2.imread(hint_path, cv2.IMREAD_GRAYSCALE)
         self._display_current_frame()
 
+    def _on_despill_changed(self, strength: float):
+        self.viewport.set_despill_strength(strength)
+        self._display_current_frame()
+
     def _update_system_stats(self):
         gpu = get_gpu_info()
         disk_gb = get_disk_free_gb()
         if gpu.get("available"):
             used = gpu.get("used_gb", 0.0)
             total = gpu.get("total_gb", 8.0)
-            self.lbl_vram_status.setText(f"VRAM: {used:.1f} / {total:.1f} GB")
+            util = gpu.get("gpu_util", 0)
+            pct = int((used / max(0.1, total)) * 100)
+            self.lbl_vram_status.setText(f"GPU: {util}% | VRAM: {used:.1f} / {total:.1f} GB ({pct}%)")
         else:
             self.lbl_vram_status.setText("CPU Only")
 
@@ -845,6 +862,11 @@ class MainWindow(QMainWindow):
     def _start_render(self, task: RenderTask):
         self._current_rendering_path = task.clip_path
         self._current_task_output_dir = task.output_dir
+
+        # Release existing reader handles before rendering to allow clean file replacement
+        if self.current_clip and self.current_clip.path == task.clip_path:
+            self._release_rendered_readers()
+
         self.media_panel.set_clip_status(task.clip_path, "Rendering", 0.0)
         self.lbl_status.setText(f"Rendering: {task.clip_name}")
         self.lbl_status.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 11px; font-weight: 600;")
@@ -879,6 +901,14 @@ class MainWindow(QMainWindow):
 
             self.lbl_status.setText(f"Done: {clip_name}")
             self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
+
+            # Play gentle audio notification chime if enabled
+            if hasattr(self.inspector, 'chk_sound_on_finish') and self.inspector.chk_sound_on_finish.isChecked():
+                try:
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+                except Exception:
+                    pass
 
             # Automatically bind rendered output and update the Viewport with transparent background!
             if self.current_clip and self.current_clip.path == clip_path:

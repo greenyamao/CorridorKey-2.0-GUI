@@ -153,6 +153,7 @@ class InspectorPanel(QFrame):
     add_queue_requested = Signal(RenderTask)
     download_weights_requested = Signal()
     hint_changed = Signal(str)
+    despill_changed = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -528,7 +529,7 @@ class InspectorPanel(QFrame):
         self.lbl_ds_val.setFixedWidth(28)
         self.lbl_ds_val.setStyleSheet("color: #FFFFFF; font-weight: 700; font-size: 11px;")
         self.lbl_ds_val.setToolTip(tip_ds)
-        self.slider_despill.valueChanged.connect(lambda v: self.lbl_ds_val.setText(f"{v/100:.2f}"))
+        self.slider_despill.valueChanged.connect(self._on_despill_slider_changed)
         ds_box.addWidget(self.lbl_ds_val)
         layout.addLayout(ds_box)
 
@@ -716,6 +717,17 @@ class InspectorPanel(QFrame):
         self.lbl_vram_info.setToolTip("<b>VRAM Estimate</b><br>Estimated VRAM requirement calculated for clip resolution and Hann window size against your 8 GB GPU.")
         layout.addWidget(self.lbl_vram_info)
 
+        # Notification & Versioning controls
+        self.chk_sound_on_finish = CheckBox("Play notification sound on completion")
+        self.chk_sound_on_finish.setChecked(True)
+        self.chk_sound_on_finish.setToolTip("<b>Completion Sound</b><br>Play a soft, gentle Windows notification chime when rendering finishes.")
+        layout.addWidget(self.chk_sound_on_finish)
+
+        self.chk_versioned_sets = CheckBox("Versioned output sets (set_01, set_02...)")
+        self.chk_versioned_sets.setChecked(True)
+        self.chk_versioned_sets.setToolTip("<b>Versioned Sets</b><br>When enabled, every new render is saved into a new subfolder (set_01, set_02...). When disabled, renders save directly to the clip directory, overwriting previous files.")
+        layout.addWidget(self.chk_versioned_sets)
+
         # Action Buttons Row
         action_row = QHBoxLayout()
         action_row.setSpacing(8)
@@ -759,6 +771,11 @@ class InspectorPanel(QFrame):
                 self.txt_hint_path.setText("None (Auto Segmentation)")
                 self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
         self._recalc_vram()
+
+    def _on_despill_slider_changed(self, v: int):
+        val = v / 100.0
+        self.lbl_ds_val.setText(f"{val:.2f}")
+        self.despill_changed.emit(val)
 
     def _on_hann_preset_changed(self, idx: int):
         self.custom_hann_row.setVisible(idx == 6)
@@ -916,14 +933,17 @@ class InspectorPanel(QFrame):
         clip_base_dir = os.path.join(self.output_dir, stem)
         os.makedirs(clip_base_dir, exist_ok=True)
 
-        # Isolated auto-incrementing set subdirectories (set_01, set_02...)
-        set_idx = 1
-        while True:
-            candidate = os.path.join(clip_base_dir, f"set_{set_idx:02d}")
-            if not os.path.exists(candidate) or not os.listdir(candidate):
-                clip_out_dir = candidate
-                break
-            set_idx += 1
+        if self.chk_versioned_sets.isChecked():
+            # Isolated auto-incrementing set subdirectories (set_01, set_02...)
+            set_idx = 1
+            while True:
+                candidate = os.path.join(clip_base_dir, f"set_{set_idx:02d}")
+                if not os.path.exists(candidate) or not os.listdir(candidate):
+                    clip_out_dir = candidate
+                    break
+                set_idx += 1
+        else:
+            clip_out_dir = clip_base_dir
         os.makedirs(clip_out_dir, exist_ok=True)
 
         use_hint = bool(self.hint_file_path)

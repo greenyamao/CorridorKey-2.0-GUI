@@ -12,8 +12,52 @@ except ImportError:
     select_vram_profile = None
 
 
+_nvml_initialized = False
+_nvml_handle = None
+
+
+def _init_nvml():
+    global _nvml_initialized, _nvml_handle
+    if _nvml_initialized and _nvml_handle is not None:
+        return _nvml_handle
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        _nvml_initialized = True
+        return _nvml_handle
+    except Exception:
+        _nvml_initialized = False
+        _nvml_handle = None
+        return None
+
+
 def get_gpu_info() -> Dict[str, Any]:
-    """Retrieve current GPU device memory info using PyTorch CUDA."""
+    """Retrieve current GPU device memory and compute utilization info using NVML with PyTorch fallback."""
+    handle = _init_nvml()
+    if handle is not None:
+        try:
+            import pynvml
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode("utf-8", errors="ignore")
+            total_gb = mem.total / (1024 ** 3)
+            used_gb = mem.used / (1024 ** 3)
+            free_gb = mem.free / (1024 ** 3)
+            return {
+                "available": True,
+                "device_name": str(name),
+                "used_gb": round(used_gb, 1),
+                "free_gb": round(free_gb, 1),
+                "total_gb": round(total_gb, 1),
+                "gpu_util": int(util.gpu),
+                "mem_util": int(util.memory),
+            }
+        except Exception:
+            pass
+
     if not torch.cuda.is_available():
         return {
             "available": False,
@@ -21,6 +65,8 @@ def get_gpu_info() -> Dict[str, Any]:
             "used_gb": 0.0,
             "free_gb": 0.0,
             "total_gb": 0.0,
+            "gpu_util": 0,
+            "mem_util": 0,
         }
     
     try:
@@ -35,6 +81,8 @@ def get_gpu_info() -> Dict[str, Any]:
             "used_gb": round(used_gb, 1),
             "free_gb": round(free_gb, 1),
             "total_gb": round(total_gb, 1),
+            "gpu_util": 0,
+            "mem_util": 0,
         }
     except Exception as e:
         return {
@@ -43,6 +91,8 @@ def get_gpu_info() -> Dict[str, Any]:
             "used_gb": 0.0,
             "free_gb": 0.0,
             "total_gb": 0.0,
+            "gpu_util": 0,
+            "mem_util": 0,
         }
 
 

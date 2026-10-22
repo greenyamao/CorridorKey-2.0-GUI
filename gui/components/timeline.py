@@ -177,7 +177,7 @@ class TimelineWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(68)
+        self.setFixedHeight(76)
         self.setStyleSheet(f"""
             QWidget#timelineDock {{
                 background-color: #141418;
@@ -297,8 +297,10 @@ class TimelineWidget(QWidget):
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(4)
 
-        self.btn_first = QPushButton("|<")
+        self.btn_first = QPushButton()
         self.btn_first.setProperty("class", "transport-btn")
+        self.btn_first.setIcon(FI.SKIP_BACK.icon(Theme.DARK))
+        self.btn_first.setIconSize(QSize(13, 13))
         self.btn_first.setToolTip("<b>First Frame (Home)</b><br>Jump to the very first frame.")
         self.btn_first.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_first.clicked.connect(self.go_to_first)
@@ -331,8 +333,10 @@ class TimelineWidget(QWidget):
         self.btn_next.clicked.connect(self.next_frame)
         center_layout.addWidget(self.btn_next)
 
-        self.btn_last = QPushButton(">|")
+        self.btn_last = QPushButton()
         self.btn_last.setProperty("class", "transport-btn")
+        self.btn_last.setIcon(FI.SKIP_FORWARD.icon(Theme.DARK))
+        self.btn_last.setIconSize(QSize(13, 13))
         self.btn_last.setToolTip("<b>Last Frame (End)</b><br>Jump to the last frame.")
         self.btn_last.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_last.clicked.connect(self.go_to_last)

@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 import os
 import re
+import time
+import threading
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -215,7 +217,35 @@ class RenderRunner(QThread):
                 env=env,
             )
 
-            current_frame = 0
+            current_stage = 0
+            last_pct = 0.0
+            stage1_start_time: Optional[float] = None
+            stage1_duration = 60.0
+            stage2_start_time: Optional[float] = None
+            stop_stage2_ticker = threading.Event()
+
+            def _stage2_ticker():
+                nonlocal last_pct
+                while not stop_stage2_ticker.is_set() and not self._is_cancelled:
+                    stop_stage2_ticker.wait(1.0)
+                    if current_stage == 2 and stage2_start_time is not None:
+                        elapsed = time.time() - stage2_start_time
+                        ratio = min(0.96, elapsed / max(15.0, stage1_duration * 1.15))
+                        target_pct = 55.0 + ratio * 38.0
+                        if target_pct > last_pct:
+                            last_pct = target_pct
+                            cur_frame = int(self.task.total_frames * (last_pct / 100.0))
+                            self.progress_changed.emit(
+                                self.task.task_id,
+                                cur_frame,
+                                self.task.total_frames,
+                                round(last_pct, 1),
+                                f"Stage 2: High-resolution matte refinement & video encoding ({round(last_pct)}%)...",
+                            )
+
+            ticker_thread = threading.Thread(target=_stage2_ticker, daemon=True)
+            ticker_thread.start()
+
             recent_lines: List[str] = []
             for raw_line in iter(self._process.stdout.readline, ""):
                 if self._is_cancelled:
@@ -234,31 +264,81 @@ class RenderRunner(QThread):
                 except Exception:
                     pass
 
-                match_frame = re.search(r"(\d+)/(\d+)", line)
-                if match_frame:
-                    try:
-                        cur, tot = int(match_frame.group(1)), int(match_frame.group(2))
-                        if tot > 0:
-                            pct = min(100.0, (cur / tot) * 100.0)
+                line_lower = line.lower()
+
+                # Stage 0: Weight & foundation prepass loading (0% - 5%)
+                if "loading weights:" in line_lower:
+                    m_w = re.search(r"(\d+)%", line)
+                    if m_w:
+                        w_pct = float(m_w.group(1))
+                        target_pct = w_pct * 0.03
+                        if target_pct > last_pct:
+                            last_pct = target_pct
                             self.progress_changed.emit(
-                                self.task.task_id, cur, tot, pct, f"Processing {cur}/{tot} frames..."
+                                self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Loading neural weights..."
                             )
-                    except Exception:
-                        pass
+                elif "rvm continuous prepass" in line_lower:
+                    last_pct = max(last_pct, 3.5)
+                    self.progress_changed.emit(
+                        self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: RVM temporal features..."
+                    )
+                elif "frozen vfm prepass" in line_lower:
+                    last_pct = max(last_pct, 4.5)
+                    self.progress_changed.emit(
+                        self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: Vision foundation representations..."
+                    )
+                elif "hann stage1:" in line_lower:
+                    current_stage = 1
+                    stage1_start_time = time.time()
+                    last_pct = max(last_pct, 5.0)
+                    self.progress_changed.emit(
+                        self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Stage 1: Temporal context analysis..."
+                    )
 
-                if "Auto VRAM:" in line:
+                # Stage 1: Hann window progression (5% - 55%)
+                elif "window " in line_lower:
+                    m_win = re.search(r"window\s+(\d+)/(\d+)", line, re.IGNORECASE)
+                    if m_win:
+                        current_stage = 1
+                        if stage1_start_time is None:
+                            stage1_start_time = time.time()
+                        w_cur, w_tot = int(m_win.group(1)), int(m_win.group(2))
+                        if w_tot > 0:
+                            ratio = w_cur / w_tot
+                            target_pct = 5.0 + ratio * 50.0
+                            if target_pct > last_pct:
+                                last_pct = target_pct
+                            cur_frame = int(ratio * self.task.total_frames)
+                            self.progress_changed.emit(
+                                self.task.task_id,
+                                cur_frame,
+                                self.task.total_frames,
+                                round(last_pct, 1),
+                                f"Stage 1: Temporal window {w_cur}/{w_tot}...",
+                            )
+                            if w_cur == w_tot:
+                                current_stage = 2
+                                if stage1_start_time is not None:
+                                    stage1_duration = max(10.0, time.time() - stage1_start_time)
+                                stage2_start_time = time.time()
+                                last_pct = max(last_pct, 55.0)
+                                self.progress_changed.emit(
+                                    self.task.task_id,
+                                    cur_frame,
+                                    self.task.total_frames,
+                                    55.0,
+                                    "Stage 2: High-resolution matte refinement & video encoding...",
+                                )
+
+                # Stage 3: Container muxing complete (100%)
+                elif "wrote " in line_lower and "output video" in line_lower:
+                    current_stage = 3
+                    last_pct = 100.0
                     self.progress_changed.emit(
-                        self.task.task_id, 0, self.task.total_frames, 5.0, line
-                    )
-                elif "stage 1" in line.lower():
-                    self.progress_changed.emit(
-                        self.task.task_id, 0, self.task.total_frames, 35.0, "Stage 1: Temporal context analysis..."
-                    )
-                elif "stage 2" in line.lower():
-                    self.progress_changed.emit(
-                        self.task.task_id, 0, self.task.total_frames, 75.0, "Stage 2: Full-res matte synthesis..."
+                        self.task.task_id, self.task.total_frames, self.task.total_frames, 100.0, "Writing video containers complete!"
                     )
 
+            stop_stage2_ticker.set()
             self._process.stdout.close()
             return_code = self._process.wait()
 
