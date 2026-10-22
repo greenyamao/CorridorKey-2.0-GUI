@@ -276,6 +276,13 @@ class ViewportWidget(QWidget):
 
     def _get_active_image(self) -> Optional[QImage]:
         if self.channel_mode == "Original":
+            # In Wipe or Side by side mode, compare Original against rendered Composite
+            if (
+                self.display_mode in ("Wipe", "Side by side")
+                and self._composite_frame is not None
+                and self._composite_frame is not self._original_frame
+            ):
+                return self._composite_frame
             return self._original_frame or self._current_frame
         elif self.channel_mode == "Alpha":
             return self._alpha_frame

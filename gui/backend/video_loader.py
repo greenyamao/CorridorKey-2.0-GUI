@@ -58,13 +58,15 @@ class StreamingFFmpegReader:
         self.proc: Optional[subprocess.Popen] = None
         self.current_pipe_frame = -1
         self._cache: Dict[int, np.ndarray] = {}
-        self._max_cache = 48
+        self._max_cache = 128
 
     def _start_pipe_at(self, frame_idx: int):
         self._close_pipe()
         seek_sec = frame_idx / self.fps
         cmd = [
             "ffmpeg",
+            "-nostats",
+            "-loglevel", "error",
             "-ss", f"{seek_sec:.4f}",
             "-i", self.video_path,
             "-f", "rawvideo",
@@ -90,6 +92,7 @@ class StreamingFFmpegReader:
                     self.proc.stdout.close()
                 self.proc.terminate()
                 self.proc.kill()
+                self.proc.wait(timeout=0.2)
             except Exception:
                 pass
             self.proc = None

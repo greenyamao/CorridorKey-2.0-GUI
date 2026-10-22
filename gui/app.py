@@ -682,6 +682,7 @@ class MainWindow(QMainWindow):
 
         found_alpha: Optional[Path] = None
         found_fg: Optional[Path] = None
+        found_cutout: Optional[Path] = None
         found_checker: Optional[Path] = None
         target_dir: Optional[Path] = None
 
@@ -695,18 +696,26 @@ class MainWindow(QMainWindow):
 
             if cutout_candidates or alpha_candidates or checker_candidates or fg_candidates:
                 target_dir = d
+                # Prioritize ProRes 4444 cutout MOV containing embedded RGBA
+                if cutout_candidates:
+                    found_cutout = cutout_candidates[0]
+                if fg_candidates:
+                    found_fg = fg_candidates[0]
                 if alpha_candidates:
                     found_alpha = alpha_candidates[0]
                 if checker_candidates:
                     found_checker = checker_candidates[0]
-                # For foreground: prefer H.264 _fg.mp4 (400+ FPS), fallback to ProRes MOV only if no checker MP4 preview exists
-                if fg_candidates:
-                    found_fg = fg_candidates[0]
-                elif cutout_candidates and not found_checker:
-                    found_fg = cutout_candidates[0]
                 break
 
         loaded_any = False
+        target_fg = found_cutout or found_fg
+        if target_fg and target_fg.is_file():
+            if self.rendered_fg_reader is not None:
+                self.rendered_fg_reader.close()
+            self.rendered_fg_reader = VideoReader(probe_clip(str(target_fg)))
+            self.rendered_fg_reader.open()
+            loaded_any = True
+
         if found_alpha and found_alpha.is_file():
             if self.rendered_alpha_reader is not None:
                 self.rendered_alpha_reader.close()
@@ -719,13 +728,6 @@ class MainWindow(QMainWindow):
                 self.rendered_checker_reader.close()
             self.rendered_checker_reader = VideoReader(probe_clip(str(found_checker)))
             self.rendered_checker_reader.open()
-            loaded_any = True
-
-        if found_fg and found_fg.is_file():
-            if self.rendered_fg_reader is not None:
-                self.rendered_fg_reader.close()
-            self.rendered_fg_reader = VideoReader(probe_clip(str(found_fg)))
-            self.rendered_fg_reader.open()
             loaded_any = True
 
         if loaded_any:
@@ -747,26 +749,26 @@ class MainWindow(QMainWindow):
         fg_rgb = orig_rgb
         composite_override = None
 
-        # 1. High-speed alpha matte reader (OpenCV from _alpha.mp4): 400+ FPS
-        if self.rendered_alpha_reader is not None:
+        # 1. Master ProRes 4444 RGBA Cutout (embedded alpha + despilled RGB streamed at 95 FPS):
+        if self.rendered_fg_reader is not None and self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
+            rgba = self.rendered_fg_reader.get_rgba_frame(frame_idx)
+            if rgba is not None:
+                fg_rgb = rgba[:, :, :3]
+                alpha_matte = rgba[:, :, 3]
+
+        # 2. Standalone Alpha matte pass (_alpha.mp4 or EXR sequence):
+        if alpha_matte is None and self.rendered_alpha_reader is not None:
             a_frame = self.rendered_alpha_reader.get_frame(frame_idx)
             if a_frame is not None:
                 alpha_matte = a_frame[:, :, 0] if a_frame.ndim == 3 else a_frame
 
-        # 2. Foreground reader (H.264 _fg.mp4 at 400+ FPS, or streaming ProRes MOV at 95 FPS):
-        if self.rendered_fg_reader is not None:
-            if self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
-                rgba = self.rendered_fg_reader.get_rgba_frame(frame_idx)
-                if rgba is not None:
-                    fg_rgb = rgba[:, :, :3]
-                    if alpha_matte is None:
-                        alpha_matte = rgba[:, :, 3]
-            else:
-                f_frame = self.rendered_fg_reader.get_frame(frame_idx)
-                if f_frame is not None:
-                    fg_rgb = f_frame
+        # 3. Standalone Foreground pass (_fg.mp4):
+        if self.rendered_fg_reader is not None and not self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
+            f_frame = self.rendered_fg_reader.get_frame(frame_idx)
+            if f_frame is not None:
+                fg_rgb = f_frame
 
-        # 3. Direct checker composite reader (OpenCV from _checker_comp.mp4): 400+ FPS
+        # 4. Fallback direct checker composite pass (_checker_comp*.mp4):
         if alpha_matte is None and self.rendered_checker_reader is not None:
             c_frame = self.rendered_checker_reader.get_frame(frame_idx)
             if c_frame is not None:
@@ -806,10 +808,14 @@ class MainWindow(QMainWindow):
         # Clean slate: Do NOT apply old hint masks to raw video playback
         self._active_hint_mask = None
 
-        # Only load rendered outputs if this clip was actually rendered during this session!
-        if clip.path in self.session_rendered_clips:
-            specific_dir = self.session_clip_output_dirs.get(clip.path)
-            self._check_and_load_rendered_outputs(clip, specific_dir=specific_dir)
+        # Check and load rendered outputs if available on disk or from this session
+        specific_dir = self.session_clip_output_dirs.get(clip.path)
+        has_renders = self._check_and_load_rendered_outputs(clip, specific_dir=specific_dir)
+        if has_renders:
+            # If rendered outputs exist and current channel is set to Original, switch to Composite
+            if self.cmb_channel.currentIndex() == 3:  # "Original (Source)"
+                self.cmb_channel.setCurrentIndex(0)   # "Composite (Checker)"
+                self.viewport.set_channel_mode("Composite")
         else:
             self.media_panel.set_clip_status(clip.path, "Ready")
 
@@ -989,6 +995,9 @@ class MainWindow(QMainWindow):
             # Automatically bind rendered output and update the Viewport with transparent background!
             if self.current_clip and self.current_clip.path == clip_path:
                 self._check_and_load_rendered_outputs(self.current_clip, specific_dir=task_out)
+                # Automatically switch channel to Composite so the user immediately sees the transparent result!
+                self.cmb_channel.setCurrentIndex(0)
+                self.viewport.set_channel_mode("Composite")
                 self._display_current_frame()
 
             msg_box = QMessageBox(self)
@@ -1048,8 +1057,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "btn_wipe"):
             disp_mode = str(settings.value("viewport_mode", "Wipe"))
             self._set_disp_mode(disp_mode)
-        if hasattr(self, "cmb_channel") and settings.contains("viewport_channel"):
-            self.cmb_channel.setCurrentIndex(int(settings.value("viewport_channel", 0)))
+        if hasattr(self, "cmb_channel"):
+            v_chan = int(settings.value("viewport_channel", 0))
+            if v_chan == 3:  # Do not default to Original (Source); ensure Composite (Checker) is active
+                v_chan = 0
+            self.cmb_channel.setCurrentIndex(v_chan)
         if hasattr(self, "inspector"):
             self.inspector.load_settings(settings)
         if hasattr(self, "viewport") and hasattr(self, "inspector"):
