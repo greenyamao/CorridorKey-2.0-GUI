@@ -42,7 +42,7 @@ from gui.styles.theme import (
 from gui.backend.system_monitor import get_gpu_info, get_disk_free_gb
 from gui.backend.video_loader import ClipInfo, VideoReader, probe_clip, scan_directory_for_clips
 from gui.backend.render_worker import RenderTask, RenderRunner, WeightDownloader
-from gui.managers import FFmpegManager, EngineManager, WeightsManager
+from gui.managers import FFmpegManager, EngineManager, WeightsManager, AppUpdater
 from gui.components.media_panel import MediaPanel
 from gui.components.viewport import ViewportWidget
 from gui.components.timeline import TimelineWidget
@@ -219,6 +219,9 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(600, self._prompt_engine_install)
         else:
             QTimer.singleShot(2500, self._check_engine_updates_async)
+
+        # Check for GUI application updates
+        QTimer.singleShot(3500, self._check_gui_updates_async)
 
     def _init_ui(self):
         central_widget = QWidget()
@@ -420,6 +423,27 @@ class MainWindow(QMainWindow):
         self.btn_engine_update.clicked.connect(self._on_update_engine)
         self.status_bar.addPermanentWidget(self.btn_engine_update)
 
+        self.btn_gui_update = QPushButton("⚡ Update GUI")
+        self.btn_gui_update.setVisible(False)
+        self.btn_gui_update.setFixedHeight(18)
+        self.btn_gui_update.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_gui_update.setStyleSheet("""
+            QPushButton {
+                background-color: #059669;
+                color: #FFFFFF;
+                font-size: 10px;
+                font-weight: 700;
+                border: 1px solid #10B981;
+                border-radius: 3px;
+                padding: 1px 6px;
+            }
+            QPushButton:hover {
+                background-color: #047857;
+            }
+        """)
+        self.btn_gui_update.clicked.connect(self._on_update_gui)
+        self.status_bar.addPermanentWidget(self.btn_gui_update)
+
     def _check_ffmpeg_available(self):
         if not FFmpegManager.is_available():
             reply = QMessageBox.question(
@@ -489,6 +513,40 @@ class MainWindow(QMainWindow):
                 self.lbl_status.setText("Ready")
             else:
                 QMessageBox.warning(self, "Update Failed", "Could not update engine automatically. Check your git configuration or network.")
+
+    def _check_gui_updates_async(self):
+        class GUIUpdateChecker(QThread):
+            update_found = Signal(str, str)
+            def run(self):
+                info = AppUpdater.check_for_update()
+                if info:
+                    self.update_found.emit(info[0], info[1])
+
+        self._gui_update_thread = GUIUpdateChecker(self)
+        self._gui_update_thread.update_found.connect(self._on_gui_update_found)
+        self._gui_update_thread.start()
+
+    def _on_gui_update_found(self, short_sha: str, msg: str):
+        self.btn_gui_update.setText(f"⚡ Update GUI ({short_sha})")
+        self.btn_gui_update.setToolTip(f"New GUI version available on GitHub ({short_sha}):\n{msg}\nClick to update and restart.")
+        self.btn_gui_update.setVisible(True)
+
+    def _on_update_gui(self):
+        reply = QMessageBox.question(
+            self,
+            "Update CorridorKey Workbench GUI",
+            "A newer version of the GUI is available on GitHub.\nWould you like to pull the update and restart?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.lbl_status.setText("Updating GUI...")
+            success = AppUpdater.update_gui()
+            if success:
+                QMessageBox.information(self, "Update Complete", "GUI updated successfully! The application will now restart.")
+                AppUpdater.restart_application()
+            else:
+                QMessageBox.warning(self, "Update Failed", "Could not complete GUI update automatically. Check network or git.")
+                self.lbl_status.setText("Ready")
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence(Qt.Key.Key_Space), self, self.timeline.toggle_play)
