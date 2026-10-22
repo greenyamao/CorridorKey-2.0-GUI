@@ -50,39 +50,90 @@ from gui.components.inspector import InspectorPanel
 
 
 class WeightDownloadDialog(QDialog):
-    """Dialog for downloading model weights with a live progress bar, speed, and ETA."""
+    """Dialog for downloading model weights with overall and per-model live progress bars, speed, and ETA."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Download CorridorKey 2.0 Weights (~5 GB)")
-        self.resize(580, 370)
+        self.resize(600, 430)
         self.setStyleSheet("background-color: #16161A; color: #FFFFFF;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         title_lbl = QLabel("CorridorKey 2.0 Model Setup")
         title_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         title_lbl.setStyleSheet("color: #FFFFFF;")
         layout.addWidget(title_lbl)
 
-        sub_lbl = QLabel("Downloading weights from Hugging Face & foundation models (~5 GB total)...")
+        sub_lbl = QLabel("Downloading weights from Hugging Face and foundation models (~4.9 GB total)...")
         sub_lbl.setStyleSheet("color: #D4D4DC; font-size: 11px;")
         layout.addWidget(sub_lbl)
 
         layout.addSpacing(6)
 
-        self.lbl_stage = QLabel("Connecting to Hugging Face...")
-        self.lbl_stage.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        self.lbl_stage.setStyleSheet("color: #38BDF8;")
-        layout.addWidget(self.lbl_stage)
+        # --- Overall Progress Section ---
+        overall_hdr = QHBoxLayout()
+        overall_title = QLabel("OVERALL PROGRESS")
+        overall_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        overall_title.setStyleSheet("color: #9A9AA6; letter-spacing: 0.5px;")
+        overall_hdr.addWidget(overall_title)
+        overall_hdr.addStretch()
 
-        # Progress bar with live percentage
+        self.lbl_overall_stage = QLabel("Initializing...")
+        self.lbl_overall_stage.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.lbl_overall_stage.setStyleSheet("color: #10B981;")
+        overall_hdr.addWidget(self.lbl_overall_stage)
+        layout.addLayout(overall_hdr)
+
+        self.pbar_overall = QProgressBar()
+        self.pbar_overall.setRange(0, 100)
+        self.pbar_overall.setValue(0)
+        self.pbar_overall.setFixedHeight(16)
+        self.pbar_overall.setTextVisible(True)
+        self.pbar_overall.setFormat("%p%")
+        self.pbar_overall.setStyleSheet("""
+            QProgressBar {
+                background-color: #202026;
+                border: 1px solid #363642;
+                border-radius: 4px;
+                text-align: center;
+                color: #FFFFFF;
+                font-weight: 700;
+                font-size: 10px;
+            }
+            QProgressBar::chunk {
+                background-color: #10B981;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.pbar_overall)
+
+        self.lbl_overall_stats = QLabel("Calculating total size...")
+        self.lbl_overall_stats.setStyleSheet("color: #9A9AA6; font-size: 11px; font-family: Consolas, monospace;")
+        layout.addWidget(self.lbl_overall_stats)
+
+        layout.addSpacing(6)
+
+        # --- Current Model Section ---
+        current_hdr = QHBoxLayout()
+        current_title = QLabel("CURRENT MODEL")
+        current_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        current_title.setStyleSheet("color: #9A9AA6; letter-spacing: 0.5px;")
+        current_hdr.addWidget(current_title)
+        current_hdr.addStretch()
+
+        self.lbl_stage = QLabel("Connecting to Hugging Face...")
+        self.lbl_stage.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.lbl_stage.setStyleSheet("color: #38BDF8;")
+        current_hdr.addWidget(self.lbl_stage)
+        layout.addLayout(current_hdr)
+
         self.pbar = QProgressBar()
         self.pbar.setRange(0, 100)
         self.pbar.setValue(0)
-        self.pbar.setFixedHeight(18)
+        self.pbar.setFixedHeight(16)
         self.pbar.setTextVisible(True)
         self.pbar.setFormat("%p%")
         self.pbar.setStyleSheet("""
@@ -93,7 +144,7 @@ class WeightDownloadDialog(QDialog):
                 text-align: center;
                 color: #FFFFFF;
                 font-weight: 700;
-                font-size: 11px;
+                font-size: 10px;
             }
             QProgressBar::chunk {
                 background-color: #3B82F6;
@@ -110,7 +161,7 @@ class WeightDownloadDialog(QDialog):
 
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setFixedHeight(120)
+        self.log_view.setFixedHeight(110)
         self.log_view.setStyleSheet("background-color: #121216; border: 1px solid #282832; border-radius: 5px; font-family: Consolas; font-size: 11px; color: #D4D4DC;")
         layout.addWidget(self.log_view)
 
@@ -128,6 +179,7 @@ class WeightDownloadDialog(QDialog):
         self.thread.started.connect(self.worker.run)
         self.worker.progress_received.connect(self._on_progress)
         self.worker.progress_updated.connect(self._on_progress_update)
+        self.worker.overall_progress_updated.connect(self._on_overall_progress_update)
         self.worker.finished.connect(self._on_finished)
         self.thread.start()
 
@@ -166,6 +218,13 @@ class WeightDownloadDialog(QDialog):
         if stats:
             self.lbl_stats.setText(stats)
 
+    def _on_overall_progress_update(self, pct: float, stage_title: str, stats: str):
+        self.pbar_overall.setValue(int(pct))
+        if stage_title:
+            self.lbl_overall_stage.setText(stage_title)
+        if stats:
+            self.lbl_overall_stats.setText(stats)
+
     def _on_finished(self, success: bool, msg: str):
         if hasattr(self, 'thread') and self.thread is not None and self.thread.isRunning():
             self.thread.quit()
@@ -174,6 +233,9 @@ class WeightDownloadDialog(QDialog):
         self.log_view.append(f"\nStatus: {msg}")
         self.btn_close.setText("Close")
         if success:
+            self.pbar_overall.setValue(100)
+            self.lbl_overall_stage.setText("All Models Ready (4 of 4)")
+            self.lbl_overall_stats.setText("4.88 GB / 4.88 GB (100%)")
             self.lbl_stage.setText("Download Complete!")
             self.lbl_stage.setStyleSheet("color: #10B981;")
             self.btn_close.setStyleSheet("background-color: #10B981; color: #FFFFFF; font-weight: bold; border-radius: 5px; padding: 6px 16px;")

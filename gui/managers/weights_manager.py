@@ -98,10 +98,12 @@ class WeightsManager:
 class WeightsDownloadWorker(QObject):
     """
     Background worker that runs the download script with resume support,
-    skipping completed files and emitting live telemetry.
+    skipping completed files and emitting live telemetry for both current
+    model and overall batch progress.
     """
     progress_received = Signal(str)
-    progress_updated = Signal(float, str, str)  # percent, stage_info, speed_eta
+    progress_updated = Signal(float, str, str)  # current_pct, stage_info, speed_eta
+    overall_progress_updated = Signal(float, str, str)  # overall_pct (0-100), stage_title, size_stats
     finished = Signal(bool, str)
 
     def __init__(self):
@@ -160,8 +162,41 @@ class WeightsDownloadWorker(QObject):
                 env=env
             )
 
+            stages = [
+                {"id": "corridorkey", "name": "CorridorKey v2 Weights", "size_mb": 3710.0, "tags": ["[corridorkey]"]},
+                {"id": "cradio", "name": "C-RADIOv4 Foundation Model", "size_mb": 800.0, "tags": ["[c-radio]", "cradio"]},
+                {"id": "moge", "name": "MoGe-2 Geometry Model", "size_mb": 350.0, "tags": ["[moge]"]},
+                {"id": "rvm", "name": "RVM Matting Model", "size_mb": 15.0, "tags": ["[rvm]"]},
+            ]
+            total_mb = sum(s["size_mb"] for s in stages)
+            stage_offsets = []
+            cum = 0.0
+            for s in stages:
+                stage_offsets.append(cum)
+                cum += s["size_mb"]
+
+            if status.get("corridorkey"):
+                current_stage_idx = 1
+                init_mb = stage_offsets[1]
+                init_pct = (init_mb / total_mb) * 100.0
+                current_stage = f"{stages[1]['name']} (~800 MB)"
+                self.overall_progress_updated.emit(
+                    init_pct,
+                    f"Model 2 of {len(stages)} · {stages[1]['name']}",
+                    f"{init_mb / 1000.0:.2f} GB / {total_mb / 1000.0:.2f} GB ({init_pct:.0f}%)"
+                )
+                self.progress_updated.emit(0.0, current_stage, "Connecting...")
+            else:
+                current_stage_idx = 0
+                current_stage = f"{stages[0]['name']} (~3.7 GB)"
+                self.overall_progress_updated.emit(
+                    0.0,
+                    f"Model 1 of {len(stages)} · {stages[0]['name']}",
+                    f"0.00 GB / {total_mb / 1000.0:.2f} GB (0%)"
+                )
+                self.progress_updated.emit(0.0, current_stage, "Connecting...")
+
             buf = bytearray()
-            current_stage = "Checking existing weights..."
             total_bytes: Optional[float] = None
             total_str: str = ""
 
@@ -172,6 +207,18 @@ class WeightsDownloadWorker(QObject):
                     return None
                 val, u = float(m_sz.group(1)), m_sz.group(2)
                 return val * units.get(u, 1.0)
+
+            def _emit_both(pct: float, current_info: str, speed_eta: str):
+                self.progress_updated.emit(pct, current_info, speed_eta)
+                s_meta = stages[current_stage_idx]
+                s_dl_mb = (min(100.0, max(0.0, pct)) / 100.0) * s_meta["size_mb"]
+                cur_overall_mb = stage_offsets[current_stage_idx] + s_dl_mb
+                cur_overall_pct = min(100.0, (cur_overall_mb / total_mb) * 100.0)
+                self.overall_progress_updated.emit(
+                    cur_overall_pct,
+                    f"Model {current_stage_idx + 1} of {len(stages)} · {s_meta['name']}",
+                    f"{cur_overall_mb / 1000.0:.2f} GB / {total_mb / 1000.0:.2f} GB ({cur_overall_pct:.0f}%)"
+                )
 
             while not self._is_stopped:
                 try:
@@ -187,26 +234,16 @@ class WeightsDownloadWorker(QObject):
                         self.progress_received.emit(raw_str)
 
                         # Stage detection
-                        if "[corridorkey]" in raw_str:
-                            current_stage = "CorridorKey v2 Weights (~3.7 GB)"
-                            total_bytes = None
-                            total_str = ""
-                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
-                        elif "[c-radio]" in raw_str:
-                            current_stage = "NVIDIA C-RADIOv4 Foundation Model (~800 MB)"
-                            total_bytes = None
-                            total_str = ""
-                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
-                        elif "[moge]" in raw_str:
-                            current_stage = "MoGe-2 Normal/Geometry Model (~350 MB)"
-                            total_bytes = None
-                            total_str = ""
-                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
-                        elif "[rvm]" in raw_str:
-                            current_stage = "Robust Video Matting (RVM) Model (~15 MB)"
-                            total_bytes = None
-                            total_str = ""
-                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
+                        raw_lower = raw_str.lower()
+                        for idx, s_info in enumerate(stages):
+                            if any(t in raw_lower for t in s_info["tags"]):
+                                if idx != current_stage_idx:
+                                    current_stage_idx = idx
+                                    total_bytes = None
+                                    total_str = ""
+                                    current_stage = f"{s_info['name']} (~{int(s_info['size_mb'])} MB)"
+                                    _emit_both(0.0, current_stage, "Connecting...")
+                                break
 
                         # 1. Match file total size: e.g. "reconstructing file: 0% | 0.00B / 2.66GB"
                         m_recon = re.search(r'reconstructing file:\s*(\d+)%.*?/\s*([0-9\.]+\s*[a-zA-Z]+)', raw_str)
@@ -214,7 +251,7 @@ class WeightsDownloadWorker(QObject):
                             pct = float(m_recon.group(1))
                             total_str = m_recon.group(2)
                             total_bytes = _parse_size(total_str)
-                            self.progress_updated.emit(pct, f"{current_stage}  ·  Total: {total_str}", "Downloading...")
+                            _emit_both(pct, f"{current_stage}  ·  Total: {total_str}", "Downloading...")
                             continue
 
                         # 2. Match downloading bytes stream: e.g. "downloading bytes: | 2.81MB, 218kB/s"
@@ -227,7 +264,7 @@ class WeightsDownloadWorker(QObject):
                             if total_bytes and cur_bytes is not None and total_bytes > 0:
                                 pct = min(100.0, (cur_bytes / total_bytes) * 100.0)
                             sub_info = f"{cur_str} / {total_str}" if total_str else cur_str
-                            self.progress_updated.emit(pct, f"{current_stage}  ·  {sub_info}", speed)
+                            _emit_both(pct, f"{current_stage}  ·  {sub_info}", speed)
                             continue
 
                         # 3. Match standard tqdm progress: e.g. "Fetching 31 files: 97% | 30/31"
@@ -238,7 +275,7 @@ class WeightsDownloadWorker(QObject):
                                 size_info = m_tqdm.group(2) or ""
                                 stats_info = m_tqdm.group(3) or ""
                                 stage_label = f"{current_stage}  ·  {size_info}" if size_info else current_stage
-                                self.progress_updated.emit(pct, stage_label, stats_info)
+                                _emit_both(pct, stage_label, stats_info)
                             except Exception:
                                 pass
                             continue
@@ -248,7 +285,7 @@ class WeightsDownloadWorker(QObject):
                         if m_simple:
                             try:
                                 pct = float(m_simple.group(1))
-                                self.progress_updated.emit(pct, current_stage, "")
+                                _emit_both(pct, current_stage, "")
                             except Exception:
                                 pass
                 else:
@@ -260,6 +297,11 @@ class WeightsDownloadWorker(QObject):
 
             ret = self._process.wait()
             if ret == 0:
+                self.overall_progress_updated.emit(
+                    100.0,
+                    f"All Models Ready ({len(stages)} of {len(stages)})",
+                    f"{total_mb / 1000.0:.2f} GB / {total_mb / 1000.0:.2f} GB (100%)"
+                )
                 self.progress_updated.emit(100.0, "All models verified and ready!", "")
                 self.finished.emit(True, "All models downloaded and ready!")
             else:
