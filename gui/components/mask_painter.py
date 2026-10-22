@@ -42,7 +42,6 @@ from gui.styles.theme import (
     TEXT_SECONDARY,
     ACCENT_BLUE,
     CORRIDOR_GREEN,
-    CORRIDOR_YELLOW,
 )
 
 
@@ -357,30 +356,6 @@ class PaintCanvas(QWidget):
         painter.setPen(QPen(QColor("#383842"), 1))
         painter.drawRect(dest_rect)
 
-        # 4.5. Floating Viewport HUD Guidance Badge (Top-Center)
-        if self.width() > 420:
-            hud_w = min(600, self.width() - 40)
-            hud_h = 24
-            hud_x = (self.width() - hud_w) // 2
-            hud_y = 10
-            hud_rect = QRect(hud_x, hud_y, hud_w, hud_h)
-
-            painter.save()
-            painter.setPen(QPen(QColor("#242A38"), 1))
-            painter.setBrush(QBrush(QColor(15, 18, 25, 215)))
-            painter.drawRoundedRect(hud_rect, 4, 4)
-
-            font = painter.font()
-            font.setPixelSize(11)
-            painter.setFont(font)
-            painter.setPen(QColor(CORRIDOR_YELLOW))
-            painter.drawText(
-                hud_rect,
-                Qt.AlignmentFlag.AlignCenter,
-                "Paint what to KEEP  |  Stay inside edges  |  Rough strokes only (AI downsamples hint)",
-            )
-            painter.restore()
-
         # 5. Draw Brush circle cursor preview
         if not self._is_panning and self.rect().contains(self._cursor_widget_pos):
             screen_brush_radius = (self.brush_size * self.zoom_factor) / 2.0
@@ -693,12 +668,6 @@ class MaskPainterDialog(QDialog):
         lbl_info.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
         tb_in_layout.addWidget(lbl_info)
         tb_in_layout.addStretch()
-
-        lbl_hint_advice = QLabel(
-            "Rule: Stay slightly inside subject edges. Rough strokes only — AI downsamples hint to low-res feature space."
-        )
-        lbl_hint_advice.setStyleSheet(f"color: {CORRIDOR_YELLOW}; font-size: 11px; font-weight: 600;")
-        tb_in_layout.addWidget(lbl_hint_advice)
 
         main_layout.addWidget(tip_banner)
 
