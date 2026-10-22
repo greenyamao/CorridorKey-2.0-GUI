@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QPoint, QEvent
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QFrame,
 )
-from PySide6.QtGui import QFont, QCursor, QColor
+from PySide6.QtGui import QFont, QCursor, QColor, QMouseEvent
 from qfluentwidgets import (
     FluentIcon as FI,
     Theme,
@@ -68,6 +68,82 @@ def create_separator() -> QFrame:
     sep.setFixedHeight(1)
     sep.setStyleSheet("background-color: #222228; border: none;")
     return sep
+
+
+class StudioSlider(Slider):
+    """
+    Precision Fluent Slider that:
+    1. Strictly requires Left Mouse Button to be actively pressed down to change value.
+       Eliminates phantom jumps and accidental movements when the mouse cursor hovers over the slider.
+    2. Ignores mouse wheel scrolling so the parent scroll area scrolls smoothly without altering settings.
+    3. Handles knob dragging cleanly via internal event filtering.
+    """
+    def __init__(self, orientation=Qt.Orientation.Horizontal, parent=None):
+        super().__init__(orientation, parent=parent)
+        self.setMouseTracking(False)
+        self._is_pressed = False
+        if hasattr(self, 'handle') and self.handle:
+            self.handle.setMouseTracking(False)
+            self.handle.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj == getattr(self, 'handle', None):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._is_pressed = True
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._is_pressed = False
+            elif event.type() == QEvent.Type.MouseMove:
+                if not (self._is_pressed and (event.buttons() & Qt.MouseButton.LeftButton)):
+                    return True  # Block hover movement on handle
+                delta = event.position().x() - self.handle.width() / 2
+                new_x = self.handle.x() + delta
+                val = self._posToValue(QPoint(int(new_x), int(self.height() / 2)))
+                self.setValue(val)
+                self.sliderMoved.emit(self.value())
+                return True
+        return super().eventFilter(obj, event)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_pressed = True
+            super().mousePressEvent(event)
+        else:
+            event.ignore()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        # Strictly require LeftButton to be actively held down!
+        if self._is_pressed and (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+        else:
+            event.ignore()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            self._is_pressed = False
+        super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._is_pressed:
+            self._is_pressed = False
+        super().leaveEvent(event)
+
+    def wheelEvent(self, event):
+        # Ignore mouse wheel so the parent QScrollArea scrolls instead of altering settings
+        event.ignore()
+
+
+class StudioSpinBox(QSpinBox):
+    """QSpinBox that ignores wheelEvent to avoid accidental changes while scrolling the panel."""
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class StudioDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox that ignores wheelEvent to avoid accidental changes while scrolling the panel."""
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class InspectorPanel(QFrame):
@@ -224,7 +300,7 @@ class InspectorPanel(QFrame):
         lbl_chunk.setToolTip(tip_chunk)
         chr_layout.addWidget(lbl_chunk)
 
-        self.spin_hann_chunk = QSpinBox()
+        self.spin_hann_chunk = StudioSpinBox()
         self.spin_hann_chunk.setRange(1, 128)
         self.spin_hann_chunk.setValue(48)
         self.spin_hann_chunk.setToolTip(tip_chunk)
@@ -237,7 +313,7 @@ class InspectorPanel(QFrame):
         lbl_stride.setToolTip(tip_stride)
         chr_layout.addWidget(lbl_stride)
 
-        self.spin_hann_stride = QSpinBox()
+        self.spin_hann_stride = StudioSpinBox()
         self.spin_hann_stride.setRange(1, 128)
         self.spin_hann_stride.setValue(24)
         self.spin_hann_stride.setToolTip(tip_stride)
@@ -383,7 +459,7 @@ class InspectorPanel(QFrame):
         lbl_ht.setToolTip(tip_trust)
         ht_box.addWidget(lbl_ht)
 
-        self.slider_hint_quality = Slider(Qt.Orientation.Horizontal)
+        self.slider_hint_quality = StudioSlider(Qt.Orientation.Horizontal)
         self.slider_hint_quality.setRange(10, 100)
         self.slider_hint_quality.setValue(95)
         self.slider_hint_quality.setToolTip(tip_trust)
@@ -442,7 +518,7 @@ class InspectorPanel(QFrame):
         lbl_ds.setToolTip(tip_ds)
         ds_box.addWidget(lbl_ds)
 
-        self.slider_despill = Slider(Qt.Orientation.Horizontal)
+        self.slider_despill = StudioSlider(Qt.Orientation.Horizontal)
         self.slider_despill.setRange(0, 100)
         self.slider_despill.setValue(50)
         self.slider_despill.setToolTip(tip_ds)
@@ -466,7 +542,7 @@ class InspectorPanel(QFrame):
         lbl_bright.setToolTip(tip_bc)
         bc_layout.addWidget(lbl_bright)
 
-        self.spin_brightness = QDoubleSpinBox()
+        self.spin_brightness = StudioDoubleSpinBox()
         self.spin_brightness.setRange(0.0, 5.0)
         self.spin_brightness.setSingleStep(0.05)
         self.spin_brightness.setValue(1.0)
@@ -481,7 +557,7 @@ class InspectorPanel(QFrame):
         lbl_contrast.setToolTip(tip_bc)
         bc_layout.addWidget(lbl_contrast)
 
-        self.spin_contrast = QDoubleSpinBox()
+        self.spin_contrast = StudioDoubleSpinBox()
         self.spin_contrast.setRange(0.0, 5.0)
         self.spin_contrast.setSingleStep(0.05)
         self.spin_contrast.setValue(1.0)
@@ -611,7 +687,7 @@ class InspectorPanel(QFrame):
         self.chk_limit_frames.setToolTip(tip_limit)
         limit_box.addWidget(self.chk_limit_frames)
 
-        self.spin_num_frames = QSpinBox()
+        self.spin_num_frames = StudioSpinBox()
         self.spin_num_frames.setRange(1, 999999)
         self.spin_num_frames.setValue(60)
         self.spin_num_frames.setFixedWidth(65)
