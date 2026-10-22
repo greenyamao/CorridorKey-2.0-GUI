@@ -357,6 +357,30 @@ class PaintCanvas(QWidget):
         painter.setPen(QPen(QColor("#383842"), 1))
         painter.drawRect(dest_rect)
 
+        # 4.5. Floating Viewport HUD Guidance Badge (Top-Center)
+        if self.width() > 420:
+            hud_w = min(600, self.width() - 40)
+            hud_h = 24
+            hud_x = (self.width() - hud_w) // 2
+            hud_y = 10
+            hud_rect = QRect(hud_x, hud_y, hud_w, hud_h)
+
+            painter.save()
+            painter.setPen(QPen(QColor("#242A38"), 1))
+            painter.setBrush(QBrush(QColor(15, 18, 25, 215)))
+            painter.drawRoundedRect(hud_rect, 4, 4)
+
+            font = painter.font()
+            font.setPixelSize(11)
+            painter.setFont(font)
+            painter.setPen(QColor(CORRIDOR_YELLOW))
+            painter.drawText(
+                hud_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                "Paint what to KEEP  |  Stay inside edges  |  Rough strokes only (AI downsamples hint)",
+            )
+            painter.restore()
+
         # 5. Draw Brush circle cursor preview
         if not self._is_panning and self.rect().contains(self._cursor_widget_pos):
             screen_brush_radius = (self.brush_size * self.zoom_factor) / 2.0
@@ -492,8 +516,9 @@ class MaskPainterDialog(QDialog):
         self.btn_brush.setChecked(True)
         tip_brush = (
             "<b>Brush [B]</b><br>"
-            "Paints subject silhouette with semi-transparent cyan overlay.<br>"
-            "<i>Tip: Paint the body with broad strokes; fine hair and edges are extracted automatically.</i>"
+            "Paints foreground subject to <b>KEEP</b> (unpainted background is keyed out).<br>"
+            "• <b>Stay inside edges:</b> Better to leave an unpainted margin inside than bleed onto green/blue background.<br>"
+            "• <b>Rough strokes only:</b> No need for fine detail; the AI vision model downsamples hints to low resolution."
         )
         self.btn_brush.setToolTip(tip_brush)
         self.btn_brush.clicked.connect(lambda: self._set_tool("brush"))
@@ -608,6 +633,46 @@ class MaskPainterDialog(QDialog):
 
         main_layout.addWidget(tb)
 
+        # 1.5 Prominent Subject Guidance Banner
+        info_banner = QFrame()
+        info_banner.setObjectName("guidanceBanner")
+        info_banner.setFixedHeight(42)
+        info_banner.setStyleSheet(f"""
+            QFrame#guidanceBanner {{
+                background-color: #161A23;
+                border: 1px solid #232D3F;
+                border-left: 3px solid {ACCENT_BLUE};
+                border-radius: 4px;
+            }}
+        """)
+        info_layout = QHBoxLayout(info_banner)
+        info_layout.setContentsMargins(12, 4, 12, 4)
+        info_layout.setSpacing(10)
+
+        lbl_info_icon = QLabel()
+        lbl_info_icon.setPixmap(FI.INFO.icon(color=QColor(ACCENT_BLUE)).pixmap(18, 18))
+        info_layout.addWidget(lbl_info_icon)
+
+        txt_vbox = QVBoxLayout()
+        txt_vbox.setSpacing(2)
+        txt_vbox.setContentsMargins(0, 0, 0, 0)
+
+        lbl_keep_title = QLabel(
+            "<b>PAINT WHAT TO KEEP:</b> Paint the actor or foreground subject you want to <b>PRESERVE</b> (unpainted background is keyed out)."
+        )
+        lbl_keep_title.setStyleSheet("color: #FFFFFF; font-size: 11px;")
+        txt_vbox.addWidget(lbl_keep_title)
+
+        lbl_keep_desc = QLabel(
+            "<b>Stay slightly inside borders:</b> an inner margin is better than bleeding onto green/blue background. "
+            "<b>Rough broad strokes only:</b> do not trace hair or fine edges; the AI model downsamples hints to low resolution anyway."
+        )
+        lbl_keep_desc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        txt_vbox.addWidget(lbl_keep_desc)
+
+        info_layout.addLayout(txt_vbox, stretch=1)
+        main_layout.addWidget(info_banner)
+
         # 2. Main Interactive Canvas
         self.canvas = PaintCanvas(self.bg_qimage, initial_mask=initial_mask_img, parent=self)
         self.canvas.tool_changed.connect(self._on_canvas_tool_changed)
@@ -630,7 +695,7 @@ class MaskPainterDialog(QDialog):
         tb_in_layout.addStretch()
 
         lbl_hint_advice = QLabel(
-            "Paint body silhouette with broad strokes. Fine hair and transparent edges are extracted automatically by AI."
+            "Rule: Stay slightly inside subject edges. Rough strokes only — AI downsamples hint to low-res feature space."
         )
         lbl_hint_advice.setStyleSheet(f"color: {CORRIDOR_YELLOW}; font-size: 11px; font-weight: 600;")
         tb_in_layout.addWidget(lbl_hint_advice)
