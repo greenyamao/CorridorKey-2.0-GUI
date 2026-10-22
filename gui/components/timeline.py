@@ -452,7 +452,7 @@ class TimelineWidget(QWidget):
             return
 
         elapsed = time.perf_counter() - self._play_start_time
-        target = self._play_start_frame + int(elapsed * self.fps)
+        target = self._play_start_frame + int(round(elapsed * self.fps))
 
         if target >= self.total_frames:
             if self.is_looping:

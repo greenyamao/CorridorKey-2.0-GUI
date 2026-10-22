@@ -84,12 +84,14 @@ class ViewportWidget(QWidget):
         alpha_matte: Optional[np.ndarray] = None,
         original_rgb: Optional[np.ndarray] = None,
         composite_override: Optional[np.ndarray] = None,
+        rgba_composite: Optional[np.ndarray] = None,
     ):
-        """Update active frames from numpy arrays with high-performance C++ OpenCV SIMD operations."""
-        if rgb_frame is None:
+        """Update active frames from numpy arrays with ultra-fast zero-copy and SIMD operations."""
+        if rgb_frame is None and rgba_composite is None:
             self._raw_rgb = None
             self._raw_alpha = None
             self._raw_composite_override = None
+            self._raw_rgba_composite = None
             self._current_frame = None
             self._original_frame = None
             self._alpha_frame = None
@@ -98,26 +100,27 @@ class ViewportWidget(QWidget):
             self.update()
             return
 
-        rgb_frame = np.ascontiguousarray(rgb_frame)
-        if rgb_frame.dtype != np.uint8:
-            rgb_frame = np.clip(rgb_frame, 0, 255).astype(np.uint8)
+        if rgba_composite is not None:
+            self._raw_rgba_composite = np.ascontiguousarray(rgba_composite)
+            h, w = self._raw_rgba_composite.shape[:2]
+        else:
+            self._raw_rgba_composite = None
+            h, w = rgb_frame.shape[:2]
 
-        self._raw_rgb = rgb_frame
-        if composite_override is not None:
-            composite_override = np.ascontiguousarray(composite_override)
-            if composite_override.dtype != np.uint8:
-                composite_override = np.clip(composite_override, 0, 255).astype(np.uint8)
-        self._raw_composite_override = composite_override
+        self._raw_rgb = np.ascontiguousarray(rgb_frame) if rgb_frame is not None else None
+        self._raw_composite_override = np.ascontiguousarray(composite_override) if composite_override is not None else None
 
-        h, w, c = rgb_frame.shape
-        self._current_frame = QImage(
-            rgb_frame.data, w, h, w * c, QImage.Format.Format_RGB888
-        ).copy()
+        if self._raw_rgb is not None:
+            c = self._raw_rgb.shape[2] if self._raw_rgb.ndim == 3 else 1
+            self._current_frame = QImage(
+                self._raw_rgb.data, w, h, w * c, QImage.Format.Format_RGB888
+            ).copy()
+        elif self._raw_rgba_composite is not None:
+            # Fallback current frame representation
+            self._current_frame = None
 
-        if original_rgb is not None and original_rgb is not rgb_frame:
+        if original_rgb is not None:
             original_rgb = np.ascontiguousarray(original_rgb)
-            if original_rgb.dtype != np.uint8:
-                original_rgb = np.clip(original_rgb, 0, 255).astype(np.uint8)
             oh, ow, oc = original_rgb.shape
             self._original_frame = QImage(
                 original_rgb.data, ow, oh, ow * oc, QImage.Format.Format_RGB888
@@ -126,10 +129,7 @@ class ViewportWidget(QWidget):
             self._original_frame = self._current_frame
 
         if alpha_matte is not None:
-            if alpha_matte.ndim == 3:
-                a = alpha_matte[:, :, 0]
-            else:
-                a = alpha_matte
+            a = alpha_matte[:, :, 0] if alpha_matte.ndim == 3 else alpha_matte
             if a.dtype != np.uint8:
                 a = (np.clip(a, 0.0, 1.0) * 255).astype(np.uint8)
             if a.shape[:2] == (h, w):
@@ -143,7 +143,49 @@ class ViewportWidget(QWidget):
         self.update()
 
     def _recompute_derived_frames(self):
-        """Recompute Composite, Cutout FG, and Alpha using current despill and channel settings."""
+        """Recompute Composite, Cutout FG, and Alpha using ultra-fast SIMD operations."""
+        need_wipe_or_sbs = self.display_mode in ("Wipe", "Side by side")
+
+        # FAST PATH 1: Pre-rendered RGBA Composite (e.g. from ProRes 4444 MOV, zero redundant work)
+        if getattr(self, "_raw_rgba_composite", None) is not None:
+            rgba = self._raw_rgba_composite
+            h, w = rgba.shape[:2]
+            if self.channel_mode == "Composite" or need_wipe_or_sbs:
+                self._composite_frame = QImage(
+                    rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888
+                ).copy()
+            else:
+                self._composite_frame = self._current_frame
+
+            if self.channel_mode == "Alpha":
+                a = np.ascontiguousarray(rgba[:, :, 3])
+                self._alpha_frame = QImage(
+                    a.data, w, h, w, QImage.Format.Format_Grayscale8
+                ).copy()
+            else:
+                self._alpha_frame = None
+
+            if self.channel_mode == "Foreground":
+                fg = np.ascontiguousarray(rgba[:, :, :3])
+                self._fg_frame = QImage(
+                    fg.data, w, h, w * 3, QImage.Format.Format_RGB888
+                ).copy()
+            else:
+                self._fg_frame = self._current_frame
+            return
+
+        # FAST PATH 2: Baked checker composite override (e.g. from _checker_comp.mp4)
+        if getattr(self, "_raw_composite_override", None) is not None:
+            comp_rgb = self._raw_composite_override
+            ch, cw, cc = comp_rgb.shape
+            self._composite_frame = QImage(
+                comp_rgb.data, cw, ch, cw * cc, QImage.Format.Format_RGB888
+            ).copy()
+            self._alpha_frame = None
+            self._fg_frame = self._composite_frame
+            return
+
+        # PATH 3: Dynamic Alpha Matte + RGB with SIMD despill
         if self._raw_rgb is None:
             return
 
@@ -152,21 +194,17 @@ class ViewportWidget(QWidget):
         a = self._raw_alpha
 
         if a is not None and a.shape[:2] == (h, w):
-            need_wipe_or_sbs = self.display_mode in ("Wipe", "Side by side")
-
-            # 1. Grayscale Alpha Mask (only when needed)
-            if self.channel_mode == "Alpha" or need_wipe_or_sbs:
+            if self.channel_mode == "Alpha":
                 self._alpha_frame = QImage(
                     a.data, w, h, w, QImage.Format.Format_Grayscale8
                 ).copy()
             else:
                 self._alpha_frame = None
 
-            despilled_rgb = self._apply_despill(
+            despilled_rgb = self._apply_despill_fast(
                 rgb_frame, self.despill_strength, self.despill_color
             )
 
-            # 2. RGBA Composite (SIMD cv2.cvtColor + alpha channel assignment)
             if self.channel_mode == "Composite" or need_wipe_or_sbs:
                 rgba = cv2.cvtColor(despilled_rgb, cv2.COLOR_RGB2RGBA)
                 rgba[:, :, 3] = a
@@ -176,22 +214,13 @@ class ViewportWidget(QWidget):
             else:
                 self._composite_frame = self._current_frame
 
-            # 3. Cutout Foreground (SIMD bitwise mask)
-            if self.channel_mode == "Foreground" or need_wipe_or_sbs:
+            if self.channel_mode == "Foreground":
                 fg = cv2.bitwise_and(despilled_rgb, despilled_rgb, mask=a)
                 self._fg_frame = QImage(
                     fg.data, w, h, w * 3, QImage.Format.Format_RGB888
                 ).copy()
             else:
                 self._fg_frame = self._current_frame
-        elif getattr(self, "_raw_composite_override", None) is not None:
-            comp_rgb = self._raw_composite_override
-            ch, cw, cc = comp_rgb.shape
-            self._composite_frame = QImage(
-                comp_rgb.data, cw, ch, cw * cc, QImage.Format.Format_RGB888
-            ).copy()
-            self._alpha_frame = None
-            self._fg_frame = self._composite_frame
         else:
             self._alpha_frame = None
             self._composite_frame = self._current_frame
@@ -224,55 +253,34 @@ class ViewportWidget(QWidget):
         self.update()
 
     @staticmethod
-    def _apply_despill(
+    def _apply_despill_fast(
         rgb: np.ndarray, strength: float = 0.5, color: str = "auto"
     ) -> np.ndarray:
         if strength <= 0.0 or rgb is None:
             return rgb
-        r = rgb[:, :, 0].astype(np.float32)
-        g = rgb[:, :, 1].astype(np.float32)
-        b = rgb[:, :, 2].astype(np.float32)
-
+        r, g, b = cv2.split(rgb)
         mode = (color or "auto").strip().lower()
         if mode == "auto":
-            # Sample boundary frame edges to detect whether green or blue screen is predominant
             h, w = rgb.shape[:2]
-            border = max(2, min(h, w) // 25)
-            edge_g = (
-                g[:border, :].mean()
-                + g[-border:, :].mean()
-                + g[:, :border].mean()
-                + g[:, -border:].mean()
-            ) / 4.0
-            edge_b = (
-                b[:border, :].mean()
-                + b[-border:, :].mean()
-                + b[:, :border].mean()
-                + b[:, -border:].mean()
-            ) / 4.0
+            border = max(2, min(h, w) // 30)
+            edge_g = float(g[:border, :].mean() + g[-border:, :].mean())
+            edge_b = float(b[:border, :].mean() + b[-border:, :].mean())
             mode = "blue" if edge_b > edge_g else "green"
 
         if mode == "blue":
-            spill = np.maximum(0.0, b - (r + g) * 0.5)
-            if float(spill.max()) <= 1e-3:
-                return rgb
-            full_r = np.clip(r + spill * 0.5, 0.0, 255.0)
-            full_g = np.clip(g + spill * 0.5, 0.0, 255.0)
-            full_b = np.clip(b - spill, 0.0, 255.0)
-        else:  # "green"
-            spill = np.maximum(0.0, g - (r + b) * 0.5)
-            if float(spill.max()) <= 1e-3:
-                return rgb
-            full_r = np.clip(r + spill * 0.5, 0.0, 255.0)
-            full_g = np.clip(g - spill, 0.0, 255.0)
-            full_b = np.clip(b + spill * 0.5, 0.0, 255.0)
-
-        if strength >= 1.0:
-            return np.stack([full_r, full_g, full_b], axis=-1).astype(np.uint8)
-        out_r = np.clip(r * (1.0 - strength) + full_r * strength, 0.0, 255.0)
-        out_g = np.clip(g * (1.0 - strength) + full_g * strength, 0.0, 255.0)
-        out_b = np.clip(b * (1.0 - strength) + full_b * strength, 0.0, 255.0)
-        return np.stack([out_r, out_g, out_b], axis=-1).astype(np.uint8)
+            rg_avg = cv2.addWeighted(r, 0.5, g, 0.5, 0)
+            spill = cv2.subtract(b, rg_avg)
+            if strength < 1.0:
+                spill = cv2.multiply(spill, float(strength))
+            clean_b = cv2.subtract(b, spill)
+            return cv2.merge([r, g, clean_b])
+        else:
+            rb_avg = cv2.addWeighted(r, 0.5, b, 0.5, 0)
+            spill = cv2.subtract(g, rb_avg)
+            if strength < 1.0:
+                spill = cv2.multiply(spill, float(strength))
+            clean_g = cv2.subtract(g, spill)
+            return cv2.merge([r, clean_g, b])
 
     def _get_active_image(self) -> Optional[QImage]:
         if self.channel_mode == "Original":

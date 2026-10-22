@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import time
+import threading
+import collections
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 import cv2
@@ -46,22 +49,33 @@ class ClipInfo:
 
 
 class StreamingFFmpegReader:
-    """High-performance streaming raw RGBA reader using a persistent FFmpeg pipe."""
+    """High-performance streaming raw RGBA reader with asynchronous background pre-buffering."""
 
     def __init__(self, video_path: str, width: int, height: int, fps: float, total_frames: int):
-        self.video_path = video_path
+        self.video_path = str(video_path)
         self.width = width
         self.height = height
         self.fps = max(1.0, fps)
         self.total_frames = max(1, total_frames)
         self.frame_bytes = width * height * 4
+
         self.proc: Optional[subprocess.Popen] = None
-        self.current_pipe_frame = -1
-        self._cache: Dict[int, np.ndarray] = {}
-        self._max_cache = 128
+        self._worker_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._buffer: Dict[int, np.ndarray] = collections.OrderedDict()
+        self._max_buffer = 96
+        self._current_feed_frame = -1
+
+        self._start_pipe_at(0)
 
     def _start_pipe_at(self, frame_idx: int):
+        self._stop_event.set()
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=0.15)
         self._close_pipe()
+        self._stop_event.clear()
+
         seek_sec = frame_idx / self.fps
         cmd = [
             "ffmpeg",
@@ -80,10 +94,60 @@ class StreamingFFmpegReader:
                 stderr=subprocess.DEVNULL,
                 bufsize=self.frame_bytes * 8,
             )
-            self.current_pipe_frame = frame_idx
+            self._current_feed_frame = frame_idx
+            self._worker_thread = threading.Thread(
+                target=self._read_worker,
+                args=(frame_idx,),
+                daemon=True,
+            )
+            self._worker_thread.start()
         except Exception:
             self.proc = None
-            self.current_pipe_frame = -1
+            self._current_feed_frame = -1
+
+    def _read_worker(self, start_frame: int):
+        cur = start_frame
+        while not self._stop_event.is_set() and self.proc and cur < self.total_frames:
+            try:
+                raw = self.proc.stdout.read(self.frame_bytes)
+                if len(raw) < self.frame_bytes:
+                    break
+                arr = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 4))
+                with self._lock:
+                    if len(self._buffer) >= self._max_buffer:
+                        self._buffer.popitem(last=False)
+                    self._buffer[cur] = arr
+                    self._current_feed_frame = cur
+                cur += 1
+            except Exception:
+                break
+
+    def get_frame(self, index: int) -> Optional[np.ndarray]:
+        index = max(0, min(index, self.total_frames - 1))
+
+        # 1. Fast path: frame is already in pre-buffer (0.001 ms)
+        with self._lock:
+            if index in self._buffer:
+                return self._buffer[index]
+
+        # 2. Forward streaming or close behind: wait for background worker
+        # FFmpeg is naturally streaming forward. Never restart the pipe if index is forward or slightly behind.
+        if index >= self._current_feed_frame or (self._current_feed_frame - index <= 8):
+            for _ in range(120):
+                time.sleep(0.005)
+                with self._lock:
+                    if index in self._buffer:
+                        return self._buffer[index]
+
+        # 3. Seek: jump pipe to index when seeking backward or far forward
+        self._start_pipe_at(index)
+        for _ in range(120):
+            time.sleep(0.005)
+            with self._lock:
+                if index in self._buffer:
+                    return self._buffer[index]
+
+        return None
 
     def _close_pipe(self):
         if self.proc is not None:
@@ -92,54 +156,19 @@ class StreamingFFmpegReader:
                     self.proc.stdout.close()
                 self.proc.terminate()
                 self.proc.kill()
-                self.proc.wait(timeout=0.2)
+                self.proc.wait(timeout=0.1)
             except Exception:
                 pass
             self.proc = None
-        self.current_pipe_frame = -1
-
-    def get_frame(self, index: int) -> Optional[np.ndarray]:
-        index = max(0, min(index, self.total_frames - 1))
-        if index in self._cache:
-            return self._cache[index]
-
-        if self.proc is None or index != self.current_pipe_frame:
-            # If jumping ahead by 1 to 4 frames sequentially, read through without restarting pipe
-            if self.proc is not None and 0 < (index - self.current_pipe_frame) <= 4:
-                while self.current_pipe_frame < index:
-                    try:
-                        raw = self.proc.stdout.read(self.frame_bytes)
-                        if len(raw) < self.frame_bytes:
-                            self._start_pipe_at(index)
-                            break
-                        self.current_pipe_frame += 1
-                    except Exception:
-                        self._start_pipe_at(index)
-                        break
-            else:
-                self._start_pipe_at(index)
-
-        if self.proc is None or self.proc.stdout is None:
-            return None
-
-        try:
-            raw = self.proc.stdout.read(self.frame_bytes)
-            if len(raw) < self.frame_bytes:
-                return None
-            arr = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 4))
-            self.current_pipe_frame += 1
-
-            if len(self._cache) >= self._max_cache:
-                oldest = next(iter(self._cache))
-                del self._cache[oldest]
-            self._cache[index] = arr
-            return arr
-        except Exception:
-            return None
+        self._current_feed_frame = -1
 
     def close(self):
+        self._stop_event.set()
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=0.15)
         self._close_pipe()
-        self._cache.clear()
+        with self._lock:
+            self._buffer.clear()
 
 
 class VideoReader:
@@ -158,6 +187,14 @@ class VideoReader:
 
     def open(self) -> bool:
         if not self.clip.is_frame_dir:
+            if self.clip.path.lower().endswith(".mov") and self._streaming_mov_reader is None:
+                self._streaming_mov_reader = StreamingFFmpegReader(
+                    self.clip.path,
+                    self.clip.width,
+                    self.clip.height,
+                    self.clip.fps,
+                    self.clip.total_frames,
+                )
             self.cap = cv2.VideoCapture(self.clip.path)
             return self.cap.isOpened()
         return len(self.clip.frame_files) > 0
@@ -193,10 +230,18 @@ class VideoReader:
             if self.cap is None or not self.cap.isOpened():
                 self.open()
             if self.cap is not None and self.cap.isOpened():
-                # Avoid expensive keyframe seek when reading sequentially
-                if index != self._last_index + 1:
+                delta = index - self._last_index
+                if delta == 1:
+                    ret, bgr = self.cap.read()
+                elif 1 < delta <= 8:
+                    # Skip intervening frames with lightweight grab() instead of expensive GOP seek
+                    for _ in range(delta - 1):
+                        self.cap.grab()
+                    ret, bgr = self.cap.read()
+                else:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, index)
-                ret, bgr = self.cap.read()
+                    ret, bgr = self.cap.read()
+
                 if ret and bgr is not None:
                     self._last_index = index
                     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)

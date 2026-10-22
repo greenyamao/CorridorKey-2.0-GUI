@@ -748,11 +748,13 @@ class MainWindow(QMainWindow):
         alpha_matte = None
         fg_rgb = orig_rgb
         composite_override = None
+        rgba_composite = None
 
-        # 1. Master ProRes 4444 RGBA Cutout (embedded alpha + despilled RGB streamed at 95 FPS):
+        # 1. Master ProRes 4444 RGBA Cutout (embedded alpha + despilled RGB with async pre-buffering):
         if self.rendered_fg_reader is not None and self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
             rgba = self.rendered_fg_reader.get_rgba_frame(frame_idx)
             if rgba is not None:
+                rgba_composite = rgba
                 fg_rgb = rgba[:, :, :3]
                 alpha_matte = rgba[:, :, 3]
 
@@ -769,7 +771,7 @@ class MainWindow(QMainWindow):
                 fg_rgb = f_frame
 
         # 4. Fallback direct checker composite pass (_checker_comp*.mp4):
-        if alpha_matte is None and self.rendered_checker_reader is not None:
+        if alpha_matte is None and rgba_composite is None and self.rendered_checker_reader is not None:
             c_frame = self.rendered_checker_reader.get_frame(frame_idx)
             if c_frame is not None:
                 composite_override = c_frame
@@ -779,6 +781,7 @@ class MainWindow(QMainWindow):
             alpha_matte=alpha_matte,
             original_rgb=orig_rgb,
             composite_override=composite_override,
+            rgba_composite=rgba_composite,
         )
 
     def _release_rendered_readers(self):
