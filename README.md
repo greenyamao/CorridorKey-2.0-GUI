@@ -4,7 +4,16 @@ A desktop application for CorridorKey 2.0 AI video background removal and green 
 
 ## Quick Start
 
-Just double click `launch_gui.bat`
+1. Clone or download this repository:
+
+```bash
+git clone https://github.com/greenyamao/CorridorKey-2.0-GUI.git
+cd CorridorKey-2.0-GUI
+```
+
+If you do not use Git, click the green Code button above, choose Download ZIP, and extract the folder.
+
+2. Double click `launch_gui.bat`
 
 The launcher will automatically install all required packages, set up FFmpeg, and prepare the AI engine.
 
