@@ -244,13 +244,9 @@ class ViewportWidget(QWidget):
 
     def set_despill_strength(self, strength: float):
         self.despill_strength = max(0.0, min(1.0, float(strength)))
-        self._recompute_derived_frames()
-        self.update()
 
     def set_despill_color(self, color: str):
         self.despill_color = str(color).strip().lower()
-        self._recompute_derived_frames()
-        self.update()
 
     @staticmethod
     def _apply_despill_fast(

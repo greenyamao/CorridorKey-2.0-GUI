@@ -428,8 +428,6 @@ class MainWindow(QMainWindow):
         self.inspector.download_weights_requested.connect(self._open_weight_downloader)
         self.inspector.hint_changed.connect(self._on_hint_changed)
         self.inspector.paint_mask_requested.connect(self._open_mask_painter)
-        self.inspector.despill_changed.connect(self._on_despill_changed)
-        self.inspector.despill_color_changed.connect(self._on_despill_color_changed)
         self.splitter.addWidget(self.inspector)
 
         self.splitter.setSizes([260, 760, 380])
@@ -872,14 +870,6 @@ class MainWindow(QMainWindow):
                 self._active_hint_mask = cv2.imread(hint_path, cv2.IMREAD_GRAYSCALE)
         self._display_current_frame()
 
-    def _on_despill_changed(self, strength: float):
-        self.viewport.set_despill_strength(strength)
-        self._display_current_frame()
-
-    def _on_despill_color_changed(self, color: str):
-        self.viewport.set_despill_color(color)
-        self._display_current_frame()
-
     def _update_system_stats(self):
         gpu = get_gpu_info()
         disk_gb = get_disk_free_gb()
@@ -1067,9 +1057,6 @@ class MainWindow(QMainWindow):
             self.cmb_channel.setCurrentIndex(v_chan)
         if hasattr(self, "inspector"):
             self.inspector.load_settings(settings)
-        if hasattr(self, "viewport") and hasattr(self, "inspector"):
-            self.viewport.set_despill_color(self.inspector.cmb_despill_color.currentText())
-            self.viewport.set_despill_strength(self.inspector.slider_despill.value() / 100.0)
 
     def closeEvent(self, event):
         self._save_settings()
