@@ -1,24 +1,22 @@
+
 # CorridorKey 2.0 Workbench GUI
-
 A desktop application for CorridorKey 2.0 AI video background removal and green screen keying.
-
+<img width="1280" height="756" alt="python_tRI5Bo6giI" src="https://github.com/user-attachments/assets/b1b381ae-e813-40e2-81ee-62c29fbb238a" />
+Manually select what to cut out for problematic shots.
+<img width="768" height="488" alt="python_hWr4i0xrlY" src="https://github.com/user-attachments/assets/476bfd59-7f46-4c41-97f6-cf09a19ff984" />
 ## Quick Start
 
 1. Clone or download this repository:
 
 ```bash
 git clone https://github.com/greenyamao/CorridorKey-2.0-GUI.git
-cd CorridorKey-2.0-GUI
 ```
-
 If you do not use Git, click the green Code button above, choose Download ZIP, and extract the folder.
 
 2. Double click `launch_gui.bat`
-
 The launcher will automatically install all required packages, set up FFmpeg, and prepare the AI engine.
 
 Alternatively, you can run from a terminal:
-
 ```bash
 python run_gui.py
 ```
