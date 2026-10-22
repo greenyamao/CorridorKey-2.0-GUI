@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QSizePolicy,
 )
-from PySide6.QtGui import QFont, QCursor, QPainter
+from PySide6.QtGui import QFont, QCursor, QPainter, QColor
 from qfluentwidgets import FluentIcon as FI, Theme
 
 from gui.backend.video_loader import ClipInfo, probe_clip, scan_directory_for_clips
@@ -65,14 +65,14 @@ class ClipRow(QFrame):
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setFixedHeight(54)
 
-        hint_status = f"<br>Alpha Hint: найден ({os.path.basename(clip.discovered_hint_path)})" if clip.discovered_hint_path else ""
+        hint_status = f"<br>Alpha Hint: attached ({os.path.basename(clip.discovered_hint_path)})" if clip.discovered_hint_path else ""
         self.setToolTip(
             f"<b>{clip.name}</b><br>"
-            f"Путь: {clip.path}<br>"
-            f"Разрешение: {clip.width}x{clip.height}<br>"
-            f"Кадров: {clip.total_frames} ({clip.fps:.1f} fps)"
+            f"Path: {clip.path}<br>"
+            f"Resolution: {clip.width}x{clip.height}<br>"
+            f"Frames: {clip.total_frames} ({clip.fps:.1f} fps)"
             f"{hint_status}<br>"
-            f"Кликните для выбора клипа."
+            f"Click to select clip."
         )
 
         rl = QVBoxLayout(self)
@@ -101,7 +101,7 @@ class ClipRow(QFrame):
         bot_row.setContentsMargins(0, 0, 0, 0)
         bot_row.setSpacing(6)
 
-        self.info_lbl = QLabel(f"{clip.total_frames}f · {clip.resolution_label} · {clip.fps:.0f}fps")
+        self.info_lbl = QLabel(f"{clip.total_frames}f | {clip.resolution_label} | {clip.fps:.0f}fps")
         self.info_lbl.setStyleSheet("color: #64748B; font-size: 10px; border: none; background: transparent;")
         bot_row.addWidget(self.info_lbl, stretch=1)
 
@@ -234,7 +234,7 @@ class MediaPanel(QWidget):
         head_row = QHBoxLayout()
         self.lbl_title = QLabel("Clips (0)")
         self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700; border: none; background: transparent;")
-        self.lbl_title.setToolTip("<b>Clips (Список клипов)</b><br>Загруженные видео и секвенции кадров для обработки.")
+        self.lbl_title.setToolTip("<b>Clips</b><br>Imported video files and frame sequences for processing.")
         head_row.addWidget(self.lbl_title)
         head_row.addStretch()
 
@@ -242,7 +242,7 @@ class MediaPanel(QWidget):
         btn_add_f.setIcon(FI.DOCUMENT.icon(Theme.DARK))
         btn_add_f.setIconSize(QSize(12, 12))
         btn_add_f.setProperty("class", "pill-btn")
-        btn_add_f.setToolTip("<b>+ File (Ctrl+O)</b><br>Открыть видеофайл (MP4, MOV, MKV, AVI) или первый кадр секвенции.")
+        btn_add_f.setToolTip("<b>+ File (Ctrl+O)</b><br>Open video file (MP4, MOV, MKV, AVI) or first frame of an image sequence.")
         btn_add_f.clicked.connect(self._on_import_file)
         head_row.addWidget(btn_add_f)
 
@@ -250,7 +250,7 @@ class MediaPanel(QWidget):
         btn_add_dir.setIcon(FI.FOLDER.icon(Theme.DARK))
         btn_add_dir.setIconSize(QSize(12, 12))
         btn_add_dir.setProperty("class", "pill-btn")
-        btn_add_dir.setToolTip("<b>+ Folder (Ctrl+Shift+O)</b><br>Сканировать каталог на наличие видео или загрузить папку с секвенцией кадров.")
+        btn_add_dir.setToolTip("<b>+ Folder (Ctrl+Shift+O)</b><br>Scan folder for videos or load an image sequence directory.")
         btn_add_dir.clicked.connect(self._on_import_folder)
         head_row.addWidget(btn_add_dir)
 
@@ -259,7 +259,7 @@ class MediaPanel(QWidget):
         btn_clear.setIconSize(QSize(12, 12))
         btn_clear.setFixedSize(24, 24)
         btn_clear.setStyleSheet("QPushButton { background-color: #202026; border: 1px solid #303038; border-radius: 4px; } QPushButton:hover { background-color: #2A2A34; }")
-        btn_clear.setToolTip("<b>Clear All (Очистить список)</b><br>Удалить все клипы из списка.")
+        btn_clear.setToolTip("<b>Clear All</b><br>Remove all clips from the project.")
         btn_clear.clicked.connect(self.clear_clips)
         head_row.addWidget(btn_clear)
 
@@ -287,7 +287,9 @@ class MediaPanel(QWidget):
         c_layout.addWidget(self.scroll, stretch=1)
 
         # 3. Footer Batch Action
-        self.btn_batch = QPushButton("⚡ Render All Clips")
+        self.btn_batch = QPushButton("Render All Clips")
+        self.btn_batch.setIcon(FI.PLAY.icon(color=QColor("#FFFFFF")))
+        self.btn_batch.setIconSize(QSize(12, 12))
         self.btn_batch.setProperty("class", "pill-btn")
         self.btn_batch.setFixedHeight(30)
         self.btn_batch.setStyleSheet("""
@@ -305,7 +307,7 @@ class MediaPanel(QWidget):
             }
         """)
         self.btn_batch.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.btn_batch.setToolTip("<b>Render All Clips (Пакетный рендер)</b><br>Последовательно запустить обработку всех клипов в списке.")
+        self.btn_batch.setToolTip("<b>Render All Clips</b><br>Sequentially process all clips in the project.")
         self.btn_batch.clicked.connect(self._on_batch_btn_clicked)
         self.btn_batch.setEnabled(False)
         c_layout.addWidget(self.btn_batch)
@@ -353,7 +355,8 @@ class MediaPanel(QWidget):
     def set_batch_running(self, running: bool):
         self._is_batch_running = running
         if running:
-            self.btn_batch.setText("⏹ Stop Batch")
+            self.btn_batch.setText("Stop Batch")
+            self.btn_batch.setIcon(FI.CLOSE.icon(color=QColor("#FFFFFF")))
             self.btn_batch.setStyleSheet("""
                 QPushButton {
                     background-color: #7F1D1D;
@@ -368,7 +371,8 @@ class MediaPanel(QWidget):
                 }
             """)
         else:
-            self.btn_batch.setText("⚡ Render All Clips")
+            self.btn_batch.setText("Render All Clips")
+            self.btn_batch.setIcon(FI.PLAY.icon(color=QColor("#FFFFFF")))
             self.btn_batch.setStyleSheet("""
                 QPushButton {
                     background-color: #202028;

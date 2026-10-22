@@ -326,28 +326,28 @@ class MainWindow(QMainWindow):
 
         lbl_vp_title = QLabel("Viewport")
         lbl_vp_title.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700;")
-        lbl_vp_title.setToolTip("<b>Viewport Monitor (Окно просмотра)</b><br>Интерактивный плеер с зумом, панорамированием и шторкой сравнения.")
+        lbl_vp_title.setToolTip("<b>Viewport Monitor</b><br>Interactive video monitor with pan, zoom, and interactive wipe split.")
         vph_layout.addWidget(lbl_vp_title)
 
         vph_layout.addSpacing(10)
 
         # Display Mode Segmented Buttons
         lbl_mode = QLabel("Mode:")
-        lbl_mode.setToolTip("<b>Display Mode (Режим отображения)</b><br>Переключение между одиночным видом, шторкой Wipe и параллельным видом Side by Side.")
+        lbl_mode.setToolTip("<b>Display Mode</b><br>Switch between Single view, interactive Wipe divider, and Side by Side view.")
         vph_layout.addWidget(lbl_mode)
 
         self.btn_single = QPushButton("Single")
         self.btn_single.setCheckable(True)
         self.btn_single.setChecked(True)
-        self.btn_single.setToolTip("<b>Single Mode</b><br>Одиночный просмотр выбранного выходного канала.")
+        self.btn_single.setToolTip("<b>Single Mode</b><br>Full view of the selected channel.")
 
         self.btn_wipe = QPushButton("Wipe")
         self.btn_wipe.setCheckable(True)
-        self.btn_wipe.setToolTip("<b>Wipe Mode (Интерактивная шторка)</b><br>Разделение экрана вертикальной желтой линией: слева оригинал, справа обработанный кадр. Потяните линию мышкой.")
+        self.btn_wipe.setToolTip("<b>Wipe Mode</b><br>Interactive split screen: original video on the left, processed key on the right. Drag the vertical divider line.")
 
         self.btn_sbs = QPushButton("Side by Side")
         self.btn_sbs.setCheckable(True)
-        self.btn_sbs.setToolTip("<b>Side by Side Mode</b><br>Параллельный просмотр исходника и вырезанного объекта рядом.")
+        self.btn_sbs.setToolTip("<b>Side by Side Mode</b><br>Displays original footage and keyed subject side by side.")
 
         seg_style = f"""
             QPushButton {{
@@ -383,11 +383,11 @@ class MainWindow(QMainWindow):
         # Channel Selector
         lbl_channel = QLabel("Channel:")
         tip_channel = (
-            "<b>Channel (Канал отображения)</b><br>"
-            "• <b>Composite</b>: вырезанный объект на шахматке прозрачности.<br>"
-            "• <b>Alpha</b>: черно-белая маска (белый — объект, черный — фон).<br>"
-            "• <b>Foreground</b>: RGB изображение переднего плана.<br>"
-            "• <b>Original</b>: исходный кадр видео."
+            "<b>Channel Mode</b><br>"
+            "&bull; <b>Composite</b>: keyed subject over transparency checkerboard.<br>"
+            "&bull; <b>Alpha</b>: black & white matte (white is opaque, black is transparent).<br>"
+            "&bull; <b>Foreground</b>: despilled RGB foreground.<br>"
+            "&bull; <b>Original</b>: raw source video frame."
         )
         lbl_channel.setToolTip(tip_channel)
         vph_layout.addWidget(lbl_channel)
@@ -402,7 +402,7 @@ class MainWindow(QMainWindow):
 
         btn_fit = QPushButton("Fit 100%")
         btn_fit.setProperty("class", "pill-btn")
-        btn_fit.setToolTip("<b>Fit 100% (Сбросить масштаб)</b><br>Сбросить зум и отцентрировать кадр по размеру окна (также двойной клик ЛКМ во вьюпорте).")
+        btn_fit.setToolTip("<b>Fit 100%</b><br>Reset zoom and fit the video frame to the viewport window (also double click Left Button in viewport).")
         btn_fit.clicked.connect(lambda: self.viewport.reset_view())
         vph_layout.addWidget(btn_fit)
 
@@ -449,20 +449,22 @@ class MainWindow(QMainWindow):
 
         self.lbl_status = QLabel("Ready")
         self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
-        self.lbl_status.setToolTip("<b>Status (Текущий статус)</b><br>Состояние конвейера инференса CorridorKey.")
+        self.lbl_status.setToolTip("<b>System Status</b><br>Current status of the CorridorKey inference engine.")
         self.status_bar.addWidget(self.lbl_status, stretch=1)
 
         self.lbl_vram_status = QLabel("VRAM: 0.0 / 8.0 GB")
         self.lbl_vram_status.setStyleSheet("color: #CCCCCC; font-size: 11px; font-family: Consolas, monospace; padding-right: 12px;")
-        self.lbl_vram_status.setToolTip("<b>VRAM (Использование видеопамяти)</b><br>Используемый и общий объем памяти на видеокарте NVIDIA RTX 5070 Mobile.")
+        self.lbl_vram_status.setToolTip("<b>GPU VRAM Usage</b><br>Currently allocated and total video memory on your GPU.")
         self.status_bar.addPermanentWidget(self.lbl_vram_status)
 
         self.lbl_disk_status = QLabel("Disk: 0.0 GB Free")
         self.lbl_disk_status.setStyleSheet("color: #CCCCCC; font-size: 11px; font-family: Consolas, monospace;")
-        self.lbl_disk_status.setToolTip("<b>Disk Space (Свободное место на диске)</b><br>Объем свободного пространства на целевом диске для записи видео.")
+        self.lbl_disk_status.setToolTip("<b>Disk Space</b><br>Free disk space available on the target render drive.")
         self.status_bar.addPermanentWidget(self.lbl_disk_status)
 
-        self.btn_engine_update = QPushButton("⚡ Update Engine")
+        self.btn_engine_update = QPushButton("Update Engine")
+        self.btn_engine_update.setIcon(FI.SYNC.icon(color=QColor("#FFFFFF")))
+        self.btn_engine_update.setIconSize(QSize(11, 11))
         self.btn_engine_update.setVisible(False)
         self.btn_engine_update.setFixedHeight(18)
         self.btn_engine_update.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -483,7 +485,9 @@ class MainWindow(QMainWindow):
         self.btn_engine_update.clicked.connect(self._on_update_engine)
         self.status_bar.addPermanentWidget(self.btn_engine_update)
 
-        self.btn_gui_update = QPushButton("⚡ Update GUI")
+        self.btn_gui_update = QPushButton("Update GUI")
+        self.btn_gui_update.setIcon(FI.SYNC.icon(color=QColor("#FFFFFF")))
+        self.btn_gui_update.setIconSize(QSize(11, 11))
         self.btn_gui_update.setVisible(False)
         self.btn_gui_update.setFixedHeight(18)
         self.btn_gui_update.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -562,7 +566,7 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_bg, daemon=True).start()
 
     def _on_engine_update_found(self, commit_hash: str, msg: str):
-        self.btn_engine_update.setText(f"⚡ Update Engine ({commit_hash})")
+        self.btn_engine_update.setText(f"Update Engine ({commit_hash})")
         self.btn_engine_update.setToolTip(f"New CorridorKey commit: {commit_hash}\n{msg}\nClick to pull update.")
         self.btn_engine_update.setVisible(True)
 
@@ -595,7 +599,7 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_bg, daemon=True).start()
 
     def _on_gui_update_found(self, short_sha: str, msg: str):
-        self.btn_gui_update.setText(f"⚡ Update GUI ({short_sha})")
+        self.btn_gui_update.setText(f"Update GUI ({short_sha})")
         self.btn_gui_update.setToolTip(f"New GUI version available on GitHub ({short_sha}):\n{msg}\nClick to update and restart.")
         self.btn_gui_update.setVisible(True)
 

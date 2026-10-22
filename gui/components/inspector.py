@@ -217,7 +217,7 @@ class InspectorPanel(QFrame):
 
         wc_title = QLabel("Weights missing (~5 GB)")
         wc_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        wc_title.setToolTip("Файлы весов модели CorridorKey 2.0 отсутствуют в папке weights/. Нажмите Download для автоматической загрузки.")
+        wc_title.setToolTip("CorridorKey 2.0 model weights are missing from the weights/ folder. Click Download to download automatically.")
         wb_layout.addWidget(wc_title, stretch=1)
 
         btn_dl = QPushButton("Download")
@@ -244,7 +244,7 @@ class InspectorPanel(QFrame):
         """)
         btn_dl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_dl.setFixedHeight(24)
-        btn_dl.setToolTip("<b>Скачать веса CorridorKey 2.0 (~5 GB)</b><br>Автоматически загружает веса с Hugging Face и вспомогательные модели C-RADIOv4, MoGe-2, RVM.")
+        btn_dl.setToolTip("<b>Download CorridorKey 2.0 Weights (~5 GB)</b><br>Automatically downloads weights from Hugging Face and auxiliary models C-RADIOv4, MoGe-2, RVM.")
         btn_dl.clicked.connect(self.download_weights_requested.emit)
         wb_layout.addWidget(btn_dl)
         layout.addWidget(self.weights_card)
@@ -253,7 +253,7 @@ class InspectorPanel(QFrame):
         # =====================================================================
         # 1. INFERENCE & VRAM
         # =====================================================================
-        tip_vram_sec = "<b>Inference & VRAM</b><br>Параметры нейросетевого движка CorridorKey 2.0 и распределения видеопамяти."
+        tip_vram_sec = "<b>Inference & VRAM</b><br>CorridorKey 2.0 neural network inference settings and VRAM allocation."
         layout.addWidget(create_section_header("Inference & VRAM", tip_vram_sec))
 
         # Hann Window row
@@ -262,13 +262,13 @@ class InspectorPanel(QFrame):
         lbl_preset = QLabel("Hann Window:")
         lbl_preset.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_hann = (
-            "<b>Hann Window (Временные окна контекста)</b><br>"
-            "Группирует соседние кадры во временные пачки с перекрытием (Chunk/Stride) для плавности краев и размытия в движении:<br>"
-            "• <b>Auto VRAM</b>: автоматически подбирает максимальный размер окна под 8 GB вашей RTX 5070.<br>"
-            "• <b>High Quality (48 / 24)</b>: кинематографический стандарт, убирает дрожание контуров.<br>"
-            "• <b>Medium (24 / 12)</b>: сбалансированный режим.<br>"
-            "• <b>Low VRAM (8 / 4)</b>: короткое окно при нехватке памяти.<br>"
-            "• <b>Single Frame (1 / 1)</b>: покадровая обработка без контекста (минимальная VRAM)."
+            "<b>Hann Window (Temporal Context Window)</b><br>"
+            "Groups neighboring frames into overlapping temporal batches (Chunk/Stride) for edge stability and motion blur:<br>"
+            "&bull; <b>Auto VRAM</b>: automatically selects maximum window size within 8 GB VRAM budget.<br>"
+            "&bull; <b>High Quality (48 / 24)</b>: cinematic production standard, minimizes edge flicker.<br>"
+            "&bull; <b>Medium (24 / 12)</b>: balanced performance and quality.<br>"
+            "&bull; <b>Low VRAM (8 / 4)</b>: compact temporal window for limited memory.<br>"
+            "&bull; <b>Single Frame (1 / 1)</b>: frame-by-frame processing without temporal context (minimum VRAM)."
         )
         lbl_preset.setToolTip(tip_hann)
         h_box.addWidget(lbl_preset)
@@ -296,7 +296,7 @@ class InspectorPanel(QFrame):
 
         lbl_chunk = QLabel("Chunk:")
         lbl_chunk.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_chunk = "<b>Chunk (Размер окна)</b><br>Количество последовательных кадров, обрабатываемых нейросетью за один шаг."
+        tip_chunk = "<b>Chunk (Window Size)</b><br>Number of consecutive frames processed together in each neural step."
         lbl_chunk.setToolTip(tip_chunk)
         chr_layout.addWidget(lbl_chunk)
 
@@ -309,7 +309,7 @@ class InspectorPanel(QFrame):
 
         lbl_stride = QLabel("Stride:")
         lbl_stride.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_stride = "<b>Stride (Шаг сдвига)</b><br>Смещение временного окна между шагами (обычно половина от Chunk)."
+        tip_stride = "<b>Stride (Step Offset)</b><br>Temporal stride between consecutive windows (typically half of Chunk)."
         lbl_stride.setToolTip(tip_stride)
         chr_layout.addWidget(lbl_stride)
 
@@ -325,9 +325,9 @@ class InspectorPanel(QFrame):
         self.chk_low_vram = CheckBox("Low GPU Memory (Disk Caching)")
         self.chk_low_vram.setChecked(False)
         self.chk_low_vram.setToolTip(
-            "<b>Low GPU Memory (Режим экономии видеопамяти)</b><br>"
-            "Выгружает промежуточные слои внимания на диск (memory map).<br>"
-            "Позволяет рендерить тяжелые 4K кадры на 8 GB VRAM абсолютно без риска ошибки Out Of Memory (OOM)."
+            "<b>Low GPU Memory (Disk Caching)</b><br>"
+            "Offloads intermediate attention feature maps to disk (memory map).<br>"
+            "Enables rendering 4K video on 8 GB VRAM with zero risk of Out Of Memory (OOM) errors."
         )
         self.chk_low_vram.stateChanged.connect(self._recalc_vram)
         layout.addWidget(self.chk_low_vram)
@@ -338,10 +338,10 @@ class InspectorPanel(QFrame):
         lbl_scale = QLabel("Model Scale:")
         lbl_scale.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_scale = (
-            "<b>Model Scale (Масштаб инференса)</b><br>"
-            "Разрешение, в котором нейросеть анализирует кадры:<br>"
-            "• <b>1.0x (Native)</b>: исходное разрешение без сжатия.<br>"
-            "• <b>0.50x (Fast)</b>: уменьшает вход в 2 раза, ускоряет рендер в 3-4 раза."
+            "<b>Model Scale (Inference Resolution)</b><br>"
+            "Resolution at which the neural network processes frames:<br>"
+            "&bull; <b>1.0x (Native)</b>: full resolution without downsampling.<br>"
+            "&bull; <b>0.50x (Fast)</b>: 2x downscaled input, 3-4x faster rendering."
         )
         lbl_scale.setToolTip(tip_scale)
         scale_box.addWidget(lbl_scale)
@@ -357,7 +357,7 @@ class InspectorPanel(QFrame):
         temp_box.setSpacing(6)
         lbl_cache = QLabel("Cache Folder:")
         lbl_cache.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_cache = "<b>Cache Folder (Папка кэша)</b><br>Каталог для временных карт признаков при включенном режиме Low VRAM."
+        tip_cache = "<b>Cache Folder</b><br>Directory for temporary feature maps when Low GPU Memory mode is enabled."
         lbl_cache.setToolTip(tip_cache)
         temp_box.addWidget(lbl_cache)
 
@@ -371,7 +371,7 @@ class InspectorPanel(QFrame):
         btn_temp = QPushButton("...")
         btn_temp.setProperty("class", "pill-btn")
         btn_temp.setFixedSize(26, 22)
-        btn_temp.setToolTip("Выбрать папку для кэша признаков (если мало места на системном диске)")
+        btn_temp.setToolTip("Select custom directory for feature cache (recommended if C: drive is low on free space)")
         btn_temp.clicked.connect(self._on_choose_temp_dir)
         temp_box.addWidget(btn_temp)
         layout.addLayout(temp_box)
@@ -381,7 +381,7 @@ class InspectorPanel(QFrame):
         # =====================================================================
         # 2. ALPHA HINT & TRACKING
         # =====================================================================
-        tip_hint_sec = "<b>Alpha Hint (Подсказка маски)</b><br>Направление нейросети по вспомогательной маске для сложных сцен или съемки без хромакея."
+        tip_hint_sec = "<b>Alpha Hint & Tracking</b><br>Guide the neural network with an auxiliary mask for complex scenes or shots without green screen."
         layout.addWidget(create_section_header("Alpha Hint & Tracking", tip_hint_sec))
 
         # Hint Header row: Title on left, Browse & Clear buttons on right
@@ -390,10 +390,10 @@ class InspectorPanel(QFrame):
         lbl_hint_title = QLabel("Hint File:")
         lbl_hint_title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_hint_file = (
-            "<b>Hint File (Файл подсказки)</b><br>"
-            "• Картинка маски 1-го кадра (PNG, JPG, EXR)<br>"
-            "• Видеоролик маски/ротоскопа (MP4, MOV)<br>"
-            "Белый цвет — объект, черный — фон."
+            "<b>Hint File</b><br>"
+            "&bull; First frame mask image (PNG, JPG, EXR)<br>"
+            "&bull; Video matte / rotoscope sequence (MP4, MOV)<br>"
+            "White indicates subject, black indicates background."
         )
         lbl_hint_title.setToolTip(tip_hint_file)
         hint_head_row.addWidget(lbl_hint_title)
@@ -413,7 +413,7 @@ class InspectorPanel(QFrame):
         self.btn_clear_hint.setIconSize(QSize(12, 12))
         self.btn_clear_hint.setFixedSize(22, 22)
         self.btn_clear_hint.setStyleSheet("QPushButton { background-color: #222228; border: 1px solid #363640; border-radius: 4px; } QPushButton:hover { background-color: #32323A; }")
-        self.btn_clear_hint.setToolTip("Сбросить выбранную подсказку и вернуть автоматическое вырезание")
+        self.btn_clear_hint.setToolTip("Reset selected hint and return to automatic segmentation")
         self.btn_clear_hint.clicked.connect(self._on_clear_hint)
         hint_head_row.addWidget(self.btn_clear_hint)
         layout.addLayout(hint_head_row)
@@ -421,7 +421,7 @@ class InspectorPanel(QFrame):
         # Full-width hint file display
         self.txt_hint_path = QLineEdit("None (Auto Segmentation)")
         self.txt_hint_path.setReadOnly(True)
-        self.txt_hint_path.setToolTip("Нейросеть автоматически сегментирует главный объект без подсказки.")
+        self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
         self.txt_hint_path.setStyleSheet("background-color: #1A1A20; border: 1px solid #282830; border-radius: 4px; padding: 2px 6px; color: #94A3B8; font-size: 11px;")
         self.lbl_hint_name = self.txt_hint_path
         layout.addWidget(self.txt_hint_path)
@@ -432,9 +432,9 @@ class InspectorPanel(QFrame):
         lbl_hm = QLabel("Hint Mode:")
         lbl_hm.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_hm = (
-            "<b>Hint Mode (Режим подсказки)</b><br>"
-            "• <b>First Frame Only</b>: достаточно грубой маски первого кадра, дальше модель отслеживает объект сама.<br>"
-            "• <b>Video Matte</b>: покадровая маска на всё видео."
+            "<b>Hint Mode</b><br>"
+            "&bull; <b>First Frame Only</b>: rough mask on the first frame is sufficient; model tracks the subject across all subsequent frames.<br>"
+            "&bull; <b>Video Matte</b>: frame-by-frame companion mask video for the entire clip."
         )
         lbl_hm.setToolTip(tip_hm)
         hm_box.addWidget(lbl_hm)
@@ -451,10 +451,10 @@ class InspectorPanel(QFrame):
         lbl_ht = QLabel("Trust:")
         lbl_ht.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_trust = (
-            "<b>Hint Trust (Доверие подсказке)</b><br>"
-            "Степень уверенности модели в предоставленной маске (hint_quality):<br>"
-            "• <b>0.95</b>: точная чистая маска от художника.<br>"
-            "• <b>0.70</b>: примерный набросок контура объекта."
+            "<b>Hint Trust</b><br>"
+            "Model confidence weighting for the provided hint mask (hint_quality):<br>"
+            "&bull; <b>0.95</b>: precise rotoscope/matte from an artist.<br>"
+            "&bull; <b>0.70</b>: rough scribble or approximate outline."
         )
         lbl_ht.setToolTip(tip_trust)
         ht_box.addWidget(lbl_ht)
@@ -477,8 +477,8 @@ class InspectorPanel(QFrame):
         self.chk_carry_hint = CheckBox("Hann Temporal Carry Hint")
         self.chk_carry_hint.setChecked(True)
         self.chk_carry_hint.setToolTip(
-            "<b>Hann Temporal Carry Hint (Перенос маски)</b><br>"
-            "Модель передает надежные предсказания из предыдущих окон как подсказку для следующих кадров, стабилизируя трекинг на длинных планах."
+            "<b>Hann Temporal Carry Hint</b><br>"
+            "Model propagates high-confidence predictions from previous windows as temporal guidance for subsequent frames, stabilizing tracking on long shots."
         )
         layout.addWidget(self.chk_carry_hint)
 
@@ -487,14 +487,14 @@ class InspectorPanel(QFrame):
         # =====================================================================
         # 3. DESPILL & COLOR SCIENCE
         # =====================================================================
-        tip_despill_sec = "<b>Despill & Color (Подавление рефлексов фона)</b><br>Устранение зеленого или синего паразитного свечения экрана на волосах и границах объекта."
+        tip_despill_sec = "<b>Despill & Color</b><br>Suppresses green or blue background bounce and spill contamination on hair and edges."
         layout.addWidget(create_section_header("Despill & Color", tip_despill_sec))
 
         dc_box = QHBoxLayout()
         dc_box.setSpacing(6)
         lbl_dc = QLabel("Screen Color:")
         lbl_dc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_dc = "<b>Screen Color (Цвет фона)</b><br>Цвет экрана (зеленый или синий), оттенок которого нужно нейтрализовать."
+        tip_dc = "<b>Screen Color</b><br>Backdrop color (Green or Blue) to neutralize spill reflections from."
         lbl_dc.setToolTip(tip_dc)
         dc_box.addWidget(lbl_dc)
 
@@ -510,10 +510,10 @@ class InspectorPanel(QFrame):
         lbl_ds = QLabel("Despill:")
         lbl_ds.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_ds = (
-            "<b>Despill Strength (Сила подавления)</b><br>"
-            "• <b>0.50</b>: стандартная сила для хромакея (зеленый/синий экран).<br>"
-            "• <b>0.00</b>: ВЫКЛЮЧЕНО (обязательно для белых обоев, интерьера или произвольного фона, чтобы сохранить естественный цвет кожи и одежды!).<br>"
-            "• <b>1.00</b>: максимальная нейтрализация оттенка."
+            "<b>Despill Strength</b><br>"
+            "&bull; <b>0.50</b>: standard strength for green screen / blue screen footage.<br>"
+            "&bull; <b>0.00</b>: OFF (mandatory for non-green footage, white walls, or arbitrary backgrounds to preserve natural skin tones).<br>"
+            "&bull; <b>1.00</b>: maximum spill neutralization."
         )
         lbl_ds.setToolTip(tip_ds)
         ds_box.addWidget(lbl_ds)
@@ -535,7 +535,7 @@ class InspectorPanel(QFrame):
         # Linear Brightness & Contrast (clean side-by-side)
         bc_layout = QHBoxLayout()
         bc_layout.setSpacing(6)
-        tip_bc = "<b>Linear Brightness & Contrast</b><br>Коррекция экспозиции и контраста переднего плана в линейном цветовом пространстве."
+        tip_bc = "<b>Linear Brightness & Contrast</b><br>Exposure and contrast adjustment of foreground subject in scene-linear color space."
 
         lbl_bright = QLabel("Brightness:")
         lbl_bright.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
@@ -571,7 +571,7 @@ class InspectorPanel(QFrame):
         self.chk_cutout_linear.setChecked(False)
         self.chk_cutout_linear.setToolTip(
             "<b>Cutout Straight Linear RGB</b><br>"
-            "Экспорт вырезанного клипа в чистом линейном RGB (без sRGB гаммы и без премультипликации) для профессионального композа в DaVinci Fusion, Nuke, After Effects."
+            "Export cutout clip in un-premultiplied straight scene-linear RGB for professional compositing in DaVinci Fusion, Nuke, or After Effects."
         )
         layout.addWidget(self.chk_cutout_linear)
 
@@ -579,7 +579,7 @@ class InspectorPanel(QFrame):
         self.chk_frame_dir_linear.setChecked(False)
         self.chk_frame_dir_linear.setToolTip(
             "<b>Input EXR as Scene-Linear</b><br>"
-            "Интерпретировать входящие секвенции OpenEXR как scene-linear gamma вместо sRGB."
+            "Interpret incoming OpenEXR frame sequences as scene-linear gamma instead of sRGB."
         )
         layout.addWidget(self.chk_frame_dir_linear)
 
@@ -588,7 +588,7 @@ class InspectorPanel(QFrame):
         # =====================================================================
         # 4. DELIVER & EXPORT
         # =====================================================================
-        tip_deliver_sec = "<b>Deliver (Экспорт)</b><br>Настройка выходных пассов, видеокодека, папки сохранения и запуск рендеринга."
+        tip_deliver_sec = "<b>Deliver</b><br>Output passes, video codec settings, export directory, and render dispatch."
         layout.addWidget(create_section_header("Deliver", tip_deliver_sec))
 
         # Passes 2x2 grid
@@ -597,7 +597,7 @@ class InspectorPanel(QFrame):
         self.chk_out_cutout.setChecked(True)
         self.chk_out_cutout.setToolTip(
             "<b>Cutout Pass (ProRes 4444 MOV)</b><br>"
-            "Главный чистовой файл для видеомонтажа: видео со встроенным прозрачным альфа-каналом и despill."
+            "Master production delivery file: video with transparent alpha channel and despill applied for NLE editing."
         )
         passes_grid.addWidget(self.chk_out_cutout)
 
@@ -605,7 +605,7 @@ class InspectorPanel(QFrame):
         self.chk_out_alpha.setChecked(True)
         self.chk_out_alpha.setToolTip(
             "<b>Alpha Matte Pass (MP4)</b><br>"
-            "Черно-белая маска силуэта (белый — объект, черный — фон). Нужна для кеинга и предпросмотра во вьюпорте."
+            "Black & white silhouette matte (white is subject, black is background) for compositing and live viewport preview."
         )
         passes_grid.addWidget(self.chk_out_alpha)
         layout.addLayout(passes_grid)
@@ -615,7 +615,7 @@ class InspectorPanel(QFrame):
         self.chk_out_fg.setChecked(False)
         self.chk_out_fg.setToolTip(
             "<b>Foreground Pass (RGB)</b><br>"
-            "RGB изображение переднего плана без альфа-канала (с despill). Отключено по умолчанию для экономии места."
+            "Despilled RGB foreground image without alpha channel. Disabled by default to save disk space."
         )
         passes_grid2.addWidget(self.chk_out_fg)
 
@@ -623,7 +623,7 @@ class InspectorPanel(QFrame):
         self.chk_out_checker.setChecked(True)
         self.chk_out_checker.setToolTip(
             "<b>Checker Preview Pass (MP4)</b><br>"
-            "Готовое превью-видео с шахматным фоном. Открывается в стандартном плеере Windows для быстрой визуальной оценки кеинга."
+            "Universal preview video composited over transparency checkerboard. Plays directly in Windows Media Player."
         )
         passes_grid2.addWidget(self.chk_out_checker)
         layout.addLayout(passes_grid2)
@@ -633,11 +633,11 @@ class InspectorPanel(QFrame):
         lbl_fmt = QLabel("Format:")
         lbl_fmt.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_fmt = (
-            "<b>Output Format (Формат вывода)</b><br>"
-            "• <b>MP4 Video (Universal - Windows Compatible)</b>: стандартный 8-bit H.264 yuv420p, открывается во всех стандартных плеерах Windows (Media Player, Кино и ТВ), браузерах и смартфонах.<br>"
-            "• <b>MP4 Video (Studio 10-bit - High 4:4:4)</b>: студийный профиль x264 без бандинга градиентов для монтажных программ (требует VLC, Premiere, DaVinci).<br>"
-            "• <b>EXR Sequence (16-bit Half)</b>: покадровая кино-секвенция для DaVinci Fusion / Nuke.<br>"
-            "• <b>EXR Sequence (32-bit Float)</b>: полноразрядные float 32-bit кадры для VFX."
+            "<b>Output Format</b><br>"
+            "&bull; <b>MP4 Video (Universal - Windows Compatible)</b>: standard 8-bit H.264 yuv420p, plays in all Windows players (Media Player, Films & TV), web browsers, and phones.<br>"
+            "&bull; <b>MP4 Video (Studio 10-bit - High 4:4:4)</b>: studio x264 profile without gradient banding for NLE compositing (requires VLC, Premiere, DaVinci).<br>"
+            "&bull; <b>EXR Sequence (16-bit Half)</b>: VFX frame sequence for DaVinci Fusion / Nuke.<br>"
+            "&bull; <b>EXR Sequence (32-bit Float)</b>: full 32-bit float linear frames for high-end VFX."
         )
         lbl_fmt.setToolTip(tip_fmt)
         fmt_box.addWidget(lbl_fmt)
@@ -658,7 +658,7 @@ class InspectorPanel(QFrame):
         out_f_head.setSpacing(6)
         lbl_out = QLabel("Output Folder:")
         lbl_out.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_out = "<b>Output Folder (Папка экспорта)</b><br>Каталог, в который будут сохранены готовые файлы."
+        tip_out = "<b>Output Folder</b><br>Target directory where render sets will be saved."
         lbl_out.setToolTip(tip_out)
         out_f_head.addWidget(lbl_out)
         out_f_head.addStretch()
@@ -668,7 +668,7 @@ class InspectorPanel(QFrame):
         btn_open_out.setIconSize(QSize(12, 12))
         btn_open_out.setProperty("class", "pill-btn")
         btn_open_out.setFixedHeight(22)
-        btn_open_out.setToolTip("Открыть папку экспорта в Проводнике Windows")
+        btn_open_out.setToolTip("Open output directory in Windows Explorer")
         btn_open_out.clicked.connect(self._on_open_out_dir)
         out_f_head.addWidget(btn_open_out)
 
@@ -677,7 +677,7 @@ class InspectorPanel(QFrame):
         btn_out_dir.setIconSize(QSize(12, 12))
         btn_out_dir.setProperty("class", "pill-btn")
         btn_out_dir.setFixedHeight(22)
-        btn_out_dir.setToolTip("Выбрать папку для сохранения экспортированных видео")
+        btn_out_dir.setToolTip("Select destination folder for exported renders")
         btn_out_dir.clicked.connect(self._on_choose_out_dir)
         out_f_head.addWidget(btn_out_dir)
         layout.addLayout(out_f_head)
@@ -695,7 +695,7 @@ class InspectorPanel(QFrame):
         limit_box.setSpacing(8)
         self.chk_limit_frames = CheckBox("Limit Frames:")
         self.chk_limit_frames.setChecked(False)
-        tip_limit = "<b>Limit Frames (Ограничение кадров)</b><br>Рендерить только первые N кадров для быстрой проверки качества."
+        tip_limit = "<b>Limit Frames</b><br>Render only the first N frames for quick quality inspection."
         self.chk_limit_frames.setToolTip(tip_limit)
         limit_box.addWidget(self.chk_limit_frames)
 
@@ -713,20 +713,20 @@ class InspectorPanel(QFrame):
         # Calculated memory requirements
         self.lbl_vram_info = QLabel("Select a clip to estimate VRAM requirements.")
         self.lbl_vram_info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
-        self.lbl_vram_info.setToolTip("<b>VRAM Estimate (Оценка видеопамяти)</b><br>Автоматический расчет требуемой VRAM под разрешение клипа и размер окна Hann с учетом 8 GB на вашей RTX 5070.")
+        self.lbl_vram_info.setToolTip("<b>VRAM Estimate</b><br>Estimated VRAM requirement calculated for clip resolution and Hann window size against your 8 GB GPU.")
         layout.addWidget(self.lbl_vram_info)
 
         # Action Buttons Row
         action_row = QHBoxLayout()
         action_row.setSpacing(8)
 
-        self.btn_render = QPushButton("▶ Render Active Clip")
+        self.btn_render = QPushButton("Render Active Clip")
         self.btn_render.setIcon(FI.PLAY.icon(color=QColor("#FFFFFF")))
         self.btn_render.setIconSize(QSize(13, 13))
         self.btn_render.setProperty("class", "primary-btn")
         self.btn_render.setFixedHeight(32)
         self.btn_render.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.btn_render.setToolTip("<b>Render Active Clip (Ctrl+R)</b><br>Запустить обработку выбранного клипа с текущими настройками.")
+        self.btn_render.setToolTip("<b>Render Active Clip (Ctrl+R)</b><br>Process currently selected clip with current settings.")
         self.btn_render.clicked.connect(self._on_render)
         action_row.addWidget(self.btn_render, stretch=1)
 
@@ -757,7 +757,7 @@ class InspectorPanel(QFrame):
             else:
                 self.hint_file_path = ""
                 self.txt_hint_path.setText("None (Auto Segmentation)")
-                self.txt_hint_path.setToolTip("Нейросеть автоматически сегментирует главный объект без подсказки.")
+                self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
         self._recalc_vram()
 
     def _on_hann_preset_changed(self, idx: int):
@@ -824,7 +824,7 @@ class InspectorPanel(QFrame):
     def _on_clear_hint(self):
         self.hint_file_path = ""
         self.txt_hint_path.setText("None (Auto Segmentation)")
-        self.txt_hint_path.setToolTip("Нейросеть автоматически сегментирует главный объект без подсказки.")
+        self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
         self.hint_changed.emit("")
 
     def _on_choose_temp_dir(self):

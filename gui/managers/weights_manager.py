@@ -191,7 +191,7 @@ class WeightsDownloadWorker(QThread):
                 current_stage = f"{stages[1]['name']} (~1.73 GB)"
                 self.overall_progress_updated.emit(
                     init_pct,
-                    f"Model 2 of {len(stages)} · {stages[1]['name']}",
+                    f"Model 2 of {len(stages)} | {stages[1]['name']}",
                     f"{init_mb / 1000.0:.2f} GB / {total_mb / 1000.0:.2f} GB ({init_pct:.0f}%)"
                 )
                 self.progress_updated.emit(0.0, current_stage, "Connecting...")
@@ -200,7 +200,7 @@ class WeightsDownloadWorker(QThread):
                 current_stage = f"{stages[0]['name']} (~2.66 GB)"
                 self.overall_progress_updated.emit(
                     0.0,
-                    f"Model 1 of {len(stages)} · {stages[0]['name']}",
+                    f"Model 1 of {len(stages)} | {stages[0]['name']}",
                     f"0.00 GB / {total_mb / 1000.0:.2f} GB (0%)"
                 )
                 self.progress_updated.emit(0.0, current_stage, "Connecting...")
@@ -225,7 +225,7 @@ class WeightsDownloadWorker(QThread):
                 cur_overall_pct = min(100.0, (cur_overall_mb / total_mb) * 100.0)
                 self.overall_progress_updated.emit(
                     cur_overall_pct,
-                    f"Model {current_stage_idx + 1} of {len(stages)} · {s_meta['name']}",
+                    f"Model {current_stage_idx + 1} of {len(stages)} | {s_meta['name']}",
                     f"{cur_overall_mb / 1000.0:.2f} GB / {total_mb / 1000.0:.2f} GB ({cur_overall_pct:.0f}%)"
                 )
 
@@ -250,7 +250,7 @@ class WeightsDownloadWorker(QThread):
                                 rvm_total = 270_086_372
                                 pct = min(99.0, (cur_bytes / rvm_total) * 100.0)
                                 speed_str = f"{speed_bps / 1e6:.1f} MB/s" if speed_bps > 0 else ""
-                                info_str = f"RVM Matting Model · {cur_bytes / 1e6:.1f} MB / 270.1 MB"
+                                info_str = f"RVM Matting Model | {cur_bytes / 1e6:.1f} MB / 270.1 MB"
                                 _emit_both(pct, info_str, speed_str)
                             except Exception:
                                 pass
@@ -289,7 +289,7 @@ class WeightsDownloadWorker(QThread):
                             pct = float(m_recon.group(1))
                             total_str = m_recon.group(2)
                             total_bytes = _parse_size(total_str)
-                            _emit_both(pct, f"{current_stage}  ·  Total: {total_str}", "Downloading...")
+                            _emit_both(pct, f"{current_stage}  |  Total: {total_str}", "Downloading...")
                             continue
 
                         # 2. Match downloading bytes stream: e.g. "downloading bytes: | 2.81MB, 218kB/s"
@@ -302,7 +302,7 @@ class WeightsDownloadWorker(QThread):
                             if total_bytes and cur_bytes is not None and total_bytes > 0:
                                 pct = min(100.0, (cur_bytes / total_bytes) * 100.0)
                             sub_info = f"{cur_str} / {total_str}" if total_str else cur_str
-                            _emit_both(pct, f"{current_stage}  ·  {sub_info}", speed)
+                            _emit_both(pct, f"{current_stage}  |  {sub_info}", speed)
                             continue
 
                         # 3. Match standard tqdm progress: e.g. "Fetching 31 files: 97% | 30/31"
@@ -312,7 +312,7 @@ class WeightsDownloadWorker(QThread):
                                 pct = float(m_tqdm.group(1))
                                 size_info = m_tqdm.group(2) or ""
                                 stats_info = m_tqdm.group(3) or ""
-                                stage_label = f"{current_stage}  ·  {size_info}" if size_info else current_stage
+                                stage_label = f"{current_stage}  |  {size_info}" if size_info else current_stage
                                 _emit_both(pct, stage_label, stats_info)
                             except Exception:
                                 pass

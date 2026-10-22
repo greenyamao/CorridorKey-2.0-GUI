@@ -44,11 +44,11 @@ class ViewportWidget(QWidget):
         self.wipe_split = 0.5  # 0.0 to 1.0
 
         self.setToolTip(
-            "<b>Окно просмотра (Viewport)</b><br>"
-            "• Панорамирование: средняя кнопка мыши (СКМ) или Ctrl + ЛКМ<br>"
-            "• Масштаб (Zoom): колесико мыши<br>"
-            "• Сброс масштаба (Fit): двойной клик ЛКМ<br>"
-            "• Шторка сравнения (Wipe): потяните желтую линию разделителя"
+            "<b>Viewport</b><br>"
+            "&bull; Pan: Middle Mouse Button (MMB) or Ctrl + Left Click<br>"
+            "&bull; Zoom: Mouse Wheel<br>"
+            "&bull; Reset to Fit: Double Click (Left Button)<br>"
+            "&bull; Wipe Split: Drag the vertical divider line"
         )
 
         # Pan and Zoom
