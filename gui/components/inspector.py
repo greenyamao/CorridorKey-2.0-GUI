@@ -155,6 +155,7 @@ class InspectorPanel(QFrame):
     hint_changed = Signal(str)
     despill_changed = Signal(float)
     despill_color_changed = Signal(str)
+    paint_mask_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -401,6 +402,25 @@ class InspectorPanel(QFrame):
         hint_head_row.addWidget(lbl_hint_title)
         hint_head_row.addStretch()
 
+        self.btn_paint_mask = QPushButton("Paint Mask...")
+        self.btn_paint_mask.setIcon(FI.PENCIL_INK.icon(Theme.DARK))
+        self.btn_paint_mask.setIconSize(QSize(12, 12))
+        self.btn_paint_mask.setProperty("class", "pill-btn")
+        self.btn_paint_mask.setFixedHeight(22)
+        tip_paint_mask = (
+            "<b>Paint First-Frame Mask (Рисование маски)</b><br>"
+            "Интерактивный инструмент для быстрого закрашивания силуэта объекта на первом кадре от руки.<br><br>"
+            "<b>Как рисовать:</b><br>"
+            "&bull; Закрасьте тело/силуэт персонажа крупными мазками полупрозрачной кисти.<br>"
+            "&bull; Не нужно вырисовывать отдельные волоски, пальцы или мелкие детали — нейросеть восстановит их сама!<br>"
+            "&bull; Старайтесь не выходить далеко за границы силуэта на фон.<br>"
+            "&bull; Степень доверия (Trust) будет автоматически выставлена на оптимальные 0.75."
+        )
+        self.btn_paint_mask.setToolTip(tip_paint_mask)
+        self.btn_paint_mask.clicked.connect(self.paint_mask_requested.emit)
+        self.btn_paint_mask.setVisible(False)
+        hint_head_row.addWidget(self.btn_paint_mask)
+
         self.btn_pick_hint = QPushButton("Browse...")
         self.btn_pick_hint.setIcon(FI.FOLDER.icon(Theme.DARK))
         self.btn_pick_hint.setIconSize(QSize(12, 12))
@@ -434,16 +454,18 @@ class InspectorPanel(QFrame):
         lbl_hm = QLabel("Hint Mode:")
         lbl_hm.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_hm = (
-            "<b>Hint Mode</b><br>"
-            "&bull; <b>First Frame Only</b>: rough mask on the first frame is sufficient; model tracks the subject across all subsequent frames.<br>"
-            "&bull; <b>Video Matte</b>: frame-by-frame companion mask video for the entire clip."
+            "<b>Hint Mode (Режим подсказки)</b><br>"
+            "&bull; <b>Auto (No Hint)</b> [По умолчанию]: автоматическая сегментация объекта нейросетью без масок.<br>"
+            "&bull; <b>First Frame (Hint)</b>: грубая подсказка на первом кадре (можно нарисовать от руки по кнопке 'Paint Mask...'). Нейросеть подхватит силуэт и проследит за ним по всему видео.<br>"
+            "&bull; <b>Video Matte</b>: покадровая видеомаска для всего клипа."
         )
         lbl_hm.setToolTip(tip_hm)
         hm_box.addWidget(lbl_hm)
 
         self.cmb_hint_frames = ComboBox()
-        self.cmb_hint_frames.addItems(["First Frame Only", "Video Matte"])
+        self.cmb_hint_frames.addItems(["Auto (No Hint)", "First Frame (Hint)", "Video Matte"])
         self.cmb_hint_frames.setToolTip(tip_hm)
+        self.cmb_hint_frames.currentIndexChanged.connect(self._on_hint_mode_changed)
         hm_box.addWidget(self.cmb_hint_frames, stretch=1)
         layout.addLayout(hm_box)
 
@@ -771,11 +793,12 @@ class InspectorPanel(QFrame):
                 self.txt_hint_path.setText(os.path.basename(clip.discovered_hint_path))
                 self.txt_hint_path.setToolTip(clip.discovered_hint_path)
                 if clip.discovered_hint_mode == "first_frame":
-                    self.cmb_hint_frames.setCurrentIndex(0)
-                else:
                     self.cmb_hint_frames.setCurrentIndex(1)
+                else:
+                    self.cmb_hint_frames.setCurrentIndex(2)
             else:
                 self.hint_file_path = ""
+                self.cmb_hint_frames.setCurrentIndex(0)
                 self.txt_hint_path.setText("None (Auto Segmentation)")
                 self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
         self._recalc_vram()
@@ -841,16 +864,57 @@ class InspectorPanel(QFrame):
             self.txt_hint_path.setToolTip(fpath)
             ext = Path(fpath).suffix.lower()
             if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm"}:
-                self.cmb_hint_frames.setCurrentIndex(1)
+                self.cmb_hint_frames.setCurrentIndex(2)
             else:
-                self.cmb_hint_frames.setCurrentIndex(0)
+                self.cmb_hint_frames.setCurrentIndex(1)
             self.hint_changed.emit(fpath)
 
     def _on_clear_hint(self):
         self.hint_file_path = ""
+        self.cmb_hint_frames.setCurrentIndex(0)
         self.txt_hint_path.setText("None (Auto Segmentation)")
         self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
+        self.btn_paint_mask.setVisible(False)
         self.hint_changed.emit("")
+
+    def _on_hint_mode_changed(self, idx: int):
+        if idx == 0:  # Auto (No Hint)
+            self.btn_paint_mask.setVisible(False)
+            self.btn_pick_hint.setEnabled(False)
+            self.slider_hint_quality.setEnabled(False)
+            self.txt_hint_path.setText("None (Auto Segmentation)")
+            self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
+            self.hint_file_path = ""
+            self.hint_changed.emit("")
+        elif idx == 1:  # First Frame (Hint)
+            self.btn_paint_mask.setVisible(True)
+            self.btn_pick_hint.setEnabled(True)
+            self.slider_hint_quality.setEnabled(True)
+            if self.hint_file_path:
+                self.txt_hint_path.setText(os.path.basename(self.hint_file_path))
+                self.txt_hint_path.setToolTip(self.hint_file_path)
+            else:
+                self.txt_hint_path.setText("No mask selected (click 'Paint Mask...' or 'Browse...')")
+                self.txt_hint_path.setToolTip("Click 'Paint Mask...' to sketch the subject or select a PNG matte.")
+        else:  # Video Matte
+            self.btn_paint_mask.setVisible(False)
+            self.btn_pick_hint.setEnabled(True)
+            self.slider_hint_quality.setEnabled(True)
+            if self.hint_file_path:
+                self.txt_hint_path.setText(os.path.basename(self.hint_file_path))
+                self.txt_hint_path.setToolTip(self.hint_file_path)
+            else:
+                self.txt_hint_path.setText("No video matte selected (click 'Browse...')")
+
+    def set_painted_mask(self, mask_path: str):
+        """Called when user successfully paints and applies a mask from MaskPainterDialog."""
+        self.hint_file_path = mask_path
+        self.cmb_hint_frames.setCurrentIndex(1)  # First Frame (Hint)
+        self.btn_paint_mask.setVisible(True)
+        self.txt_hint_path.setText(os.path.basename(mask_path))
+        self.txt_hint_path.setToolTip(mask_path)
+        self.slider_hint_quality.setValue(75)  # 0.75 is optimal trust for hand-painted masks
+        self.hint_changed.emit(mask_path)
 
     def _on_choose_temp_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Select Feature Cache Directory")
@@ -954,7 +1018,9 @@ class InspectorPanel(QFrame):
             clip_out_dir = clip_base_dir
         os.makedirs(clip_out_dir, exist_ok=True)
 
-        use_hint = bool(self.hint_file_path)
+        hint_idx = self.cmb_hint_frames.currentIndex()
+        use_hint = (hint_idx != 0) and bool(self.hint_file_path)
+        hint_mode = "first_frame" if hint_idx <= 1 else "all_frames"
 
         return RenderTask(
             task_id=task_id,
@@ -964,8 +1030,8 @@ class InspectorPanel(QFrame):
             total_frames=target_clip.total_frames,
             weights_path=self.custom_weights_path or None,
             use_alpha_hint=use_hint,
-            alpha_hint_path=self.hint_file_path,
-            hint_mode="first_frame" if self.cmb_hint_frames.currentIndex() == 0 else "all_frames",
+            alpha_hint_path=self.hint_file_path if use_hint else "",
+            hint_mode=hint_mode,
             hint_quality=self.slider_hint_quality.value() / 100.0,
             carry_hint_quality=self.slider_hint_quality.value() / 100.0,
             carry_hint=self.chk_carry_hint.isChecked(),

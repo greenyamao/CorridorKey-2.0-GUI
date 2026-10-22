@@ -426,6 +426,7 @@ class MainWindow(QMainWindow):
         self.inspector.render_requested.connect(self._on_render_active_clip)
         self.inspector.download_weights_requested.connect(self._open_weight_downloader)
         self.inspector.hint_changed.connect(self._on_hint_changed)
+        self.inspector.paint_mask_requested.connect(self._open_mask_painter)
         self.inspector.despill_changed.connect(self._on_despill_changed)
         self.inspector.despill_color_changed.connect(self._on_despill_color_changed)
         self.splitter.addWidget(self.inspector)
@@ -797,6 +798,41 @@ class MainWindow(QMainWindow):
 
     def _on_timeline_frame_changed(self, frame_idx: int):
         self._display_current_frame()
+
+    def _open_mask_painter(self):
+        if not self.active_clip or not self.active_reader:
+            QMessageBox.information(
+                self,
+                "No Clip Loaded",
+                "Please import or select a video clip to paint a mask.",
+            )
+            return
+
+        frame_0 = self.active_reader.get_frame(0)
+        if frame_0 is None:
+            QMessageBox.warning(
+                self,
+                "Frame Error",
+                "Could not decode the first frame of the active clip.",
+            )
+            return
+
+        from gui.components.mask_painter import MaskPainterDialog
+
+        dlg = MaskPainterDialog(
+            frame_rgb=frame_0,
+            clip_path=self.active_clip.path,
+            initial_mask_path=self.inspector.hint_file_path or None,
+            parent=self,
+        )
+        if dlg.exec():
+            saved_path = dlg.saved_mask_path
+            if saved_path:
+                self.inspector.set_painted_mask(saved_path)
+                self.active_clip.discovered_hint_path = saved_path
+                self.active_clip.discovered_hint_mode = "first_frame"
+                self.media_panel.update_clip_hint(self.active_clip.path, saved_path)
+                self._on_hint_changed(saved_path)
 
     def _on_hint_changed(self, hint_path: str):
         self._active_hint_mask = None

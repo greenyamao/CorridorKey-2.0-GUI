@@ -97,20 +97,21 @@ class ClipRow(QFrame):
         rl.addLayout(top_row)
 
         # Bottom row: Meta + Hint Badge
-        bot_row = QHBoxLayout()
-        bot_row.setContentsMargins(0, 0, 0, 0)
-        bot_row.setSpacing(6)
+        self.bot_row = QHBoxLayout()
+        self.bot_row.setContentsMargins(0, 0, 0, 0)
+        self.bot_row.setSpacing(6)
 
         self.info_lbl = QLabel(f"{clip.total_frames}f | {clip.resolution_label} | {clip.fps:.0f}fps")
         self.info_lbl.setStyleSheet("color: #64748B; font-size: 10px; border: none; background: transparent;")
-        bot_row.addWidget(self.info_lbl, stretch=1)
+        self.bot_row.addWidget(self.info_lbl, stretch=1)
 
+        self.hint_badge = None
         if clip.discovered_hint_path:
             self.hint_badge = QLabel("HINT")
             self.hint_badge.setStyleSheet("color: #10B981; font-size: 9px; font-weight: 700; border: none; background: transparent;")
-            bot_row.addWidget(self.hint_badge)
+            self.bot_row.addWidget(self.hint_badge)
 
-        rl.addLayout(bot_row)
+        rl.addLayout(self.bot_row)
 
         # Embedded Progress bar (visible during active inference)
         self.pbar = QProgressBar()
@@ -169,6 +170,13 @@ class ClipRow(QFrame):
                 "border: 1px solid #303038; border-radius: 3px; padding: 1px 5px;"
             )
             self.pbar.hide()
+
+    def update_hint_badge(self, hint_path: str):
+        if self.hint_badge is None:
+            self.hint_badge = QLabel("HINT")
+            self.hint_badge.setStyleSheet("color: #10B981; font-size: 9px; font-weight: 700; border: none; background: transparent;")
+            self.bot_row.addWidget(self.hint_badge)
+        self.hint_badge.setVisible(bool(hint_path))
 
     def set_selected(self, selected: bool):
         if selected:
@@ -351,6 +359,15 @@ class MediaPanel(QWidget):
     def set_clip_status(self, clip_path: str, status: str, pct: float = -1.0):
         if clip_path in self._clip_rows:
             self._clip_rows[clip_path].set_status(status, pct)
+
+    def update_clip_hint(self, clip_path: str, hint_path: str):
+        for c in self.clips:
+            if c.path == clip_path:
+                c.discovered_hint_path = hint_path
+                c.discovered_hint_mode = "first_frame"
+                break
+        if clip_path in self._clip_rows:
+            self._clip_rows[clip_path].update_hint_badge(hint_path)
 
     def set_batch_running(self, running: bool):
         self._is_batch_running = running
