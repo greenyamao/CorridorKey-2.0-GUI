@@ -216,13 +216,23 @@ class RenderRunner(QThread):
             )
 
             current_frame = 0
+            recent_lines: List[str] = []
             for raw_line in iter(self._process.stdout.readline, ""):
                 if self._is_cancelled:
                     break
                 line = raw_line.strip()
                 if not line:
                     continue
+                recent_lines.append(line)
+                if len(recent_lines) > 30:
+                    recent_lines.pop(0)
+
                 self.log_received.emit(self.task.task_id, line)
+                try:
+                    from gui.backend.logger import logger
+                    logger.info("[Infer:%s] %s", self.task.clip_name, line)
+                except Exception:
+                    pass
 
                 match_frame = re.search(r"(\d+)/(\d+)", line)
                 if match_frame:
@@ -260,9 +270,17 @@ class RenderRunner(QThread):
                 )
                 self.finished_signal.emit(self.task.task_id, True, "Render finished successfully!")
             else:
-                self.finished_signal.emit(
-                    self.task.task_id, False, f"Inference exited with code {return_code}"
-                )
+                err_summary = f"Inference exited with code {return_code}"
+                for el in reversed(recent_lines):
+                    if any(kw in el for kw in ["Error:", "Exception:", "ModuleNotFoundError", "FileNotFoundError", "RuntimeError", "CUDA out of memory"]):
+                        err_summary = el
+                        break
+                try:
+                    from gui.backend.logger import logger
+                    logger.error("[Infer:%s] Inference failed (code %s):\n%s", self.task.clip_name, return_code, "\n".join(recent_lines))
+                except Exception:
+                    pass
+                self.finished_signal.emit(self.task.task_id, False, err_summary)
 
         except Exception as e:
             self.finished_signal.emit(self.task.task_id, False, f"Execution error: {e}")

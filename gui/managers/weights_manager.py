@@ -13,6 +13,8 @@ import base64
 import hashlib
 import shutil
 import subprocess
+import time
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Tuple, List
 from PySide6.QtCore import QObject, Signal, QThread
@@ -170,10 +172,10 @@ class WeightsDownloadWorker(QThread):
             )
 
             stages = [
-                {"id": "corridorkey", "name": "CorridorKey v2 Weights", "size_mb": 3710.0, "tags": ["[corridorkey]"]},
-                {"id": "cradio", "name": "C-RADIOv4 Foundation Model", "size_mb": 800.0, "tags": ["[c-radio]", "cradio"]},
-                {"id": "moge", "name": "MoGe-2 Geometry Model", "size_mb": 350.0, "tags": ["[moge]"]},
-                {"id": "rvm", "name": "RVM Matting Model", "size_mb": 15.0, "tags": ["[rvm]"]},
+                {"id": "corridorkey", "name": "CorridorKey v2 Weights", "size_mb": 2661.0, "tags": ["[corridorkey]"]},
+                {"id": "cradio", "name": "C-RADIOv4 Foundation Model", "size_mb": 1730.0, "tags": ["[c-radio]", "cradio"]},
+                {"id": "moge", "name": "MoGe-2 Geometry Model", "size_mb": 419.0, "tags": ["[moge]"]},
+                {"id": "rvm", "name": "RVM Matting Model", "size_mb": 270.0, "tags": ["[rvm]"]},
             ]
             total_mb = sum(s["size_mb"] for s in stages)
             stage_offsets = []
@@ -186,7 +188,7 @@ class WeightsDownloadWorker(QThread):
                 current_stage_idx = 1
                 init_mb = stage_offsets[1]
                 init_pct = (init_mb / total_mb) * 100.0
-                current_stage = f"{stages[1]['name']} (~800 MB)"
+                current_stage = f"{stages[1]['name']} (~1.73 GB)"
                 self.overall_progress_updated.emit(
                     init_pct,
                     f"Model 2 of {len(stages)} · {stages[1]['name']}",
@@ -195,7 +197,7 @@ class WeightsDownloadWorker(QThread):
                 self.progress_updated.emit(0.0, current_stage, "Connecting...")
             else:
                 current_stage_idx = 0
-                current_stage = f"{stages[0]['name']} (~3.7 GB)"
+                current_stage = f"{stages[0]['name']} (~2.66 GB)"
                 self.overall_progress_updated.emit(
                     0.0,
                     f"Model 1 of {len(stages)} · {stages[0]['name']}",
@@ -226,6 +228,35 @@ class WeightsDownloadWorker(QThread):
                     f"Model {current_stage_idx + 1} of {len(stages)} · {s_meta['name']}",
                     f"{cur_overall_mb / 1000.0:.2f} GB / {total_mb / 1000.0:.2f} GB ({cur_overall_pct:.0f}%)"
                 )
+
+            # Background thread to monitor file sizes on disk when stdout produces no lines (e.g. urllib copy)
+            stop_disk_watcher = threading.Event()
+            def _disk_watcher_loop():
+                rvm_part = VFMS_DIR / "rvm" / (RVM_FILE + ".part")
+                last_bytes = 0
+                last_time = time.time()
+                while not stop_disk_watcher.is_set():
+                    time.sleep(0.3)
+                    if current_stage_idx == 3:  # RVM stage
+                        if rvm_part.exists():
+                            try:
+                                cur_bytes = rvm_part.stat().st_size
+                                now = time.time()
+                                dt = max(0.1, now - last_time)
+                                speed_bps = max(0.0, (cur_bytes - last_bytes) / dt)
+                                last_bytes = cur_bytes
+                                last_time = now
+
+                                rvm_total = 270_086_372
+                                pct = min(99.0, (cur_bytes / rvm_total) * 100.0)
+                                speed_str = f"{speed_bps / 1e6:.1f} MB/s" if speed_bps > 0 else ""
+                                info_str = f"RVM Matting Model · {cur_bytes / 1e6:.1f} MB / 270.1 MB"
+                                _emit_both(pct, info_str, speed_str)
+                            except Exception:
+                                pass
+
+            watcher_thread = threading.Thread(target=_disk_watcher_loop, daemon=True)
+            watcher_thread.start()
 
             while not self._is_stopped:
                 try:
@@ -298,6 +329,7 @@ class WeightsDownloadWorker(QThread):
                 else:
                     buf.extend(b)
 
+            stop_disk_watcher.set()
             if self._is_stopped:
                 self.download_finished.emit(False, "Download canceled by user.")
                 return

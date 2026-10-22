@@ -29,13 +29,16 @@ def ensure_environment():
             "https://download.pytorch.org/whl/cu128",
         ])
 
-    # 2. Check GUI requirements
-    try:
-        import PySide6
-        import qfluentwidgets
-        import huggingface_hub
-    except ImportError:
-        print("Required packages are missing. Installing requirements.txt...")
+    # 2. Check all GUI and inference engine requirements
+    missing = []
+    for pkg in ["PySide6", "qfluentwidgets", "huggingface_hub", "timm", "transformers", "einops", "utils3d"]:
+        try:
+            __import__(pkg)
+        except ImportError:
+            missing.append(pkg)
+
+    if missing:
+        print(f"Missing required packages: {missing}. Installing requirements.txt...")
         req_file = ROOT_DIR / "requirements.txt"
         if req_file.is_file():
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req_file)])
