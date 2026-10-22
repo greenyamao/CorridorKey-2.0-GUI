@@ -128,9 +128,11 @@ class WeightsDownloadWorker(QObject):
         WeightsManager.clean_stale_locks()
 
         # Target script: engine/scripts/download_weights.py or generated resilient runner
-        engine_script = APP_ROOT / "engine" / "scripts" / "download_weights.py"
+        from gui.managers.engine_manager import EngineManager
+        engine_dir = EngineManager.get_engine_dir()
+        engine_script = engine_dir / "scripts" / "download_weights.py"
         if not engine_script.is_file():
-            self.finished.emit(False, "Engine download script not found. Please install engine first.")
+            self.finished.emit(False, "Engine scripts not found. Please download engine or link your existing CorridorKey folder first.")
             return
 
         # Prepare resilient execution command passing --package_root pointing to APP_ROOT

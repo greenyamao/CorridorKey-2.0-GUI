@@ -177,10 +177,10 @@ class WeightDownloadDialog(QDialog):
         self.worker = WeightDownloader()
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
-        self.worker.progress_received.connect(self._on_progress)
-        self.worker.progress_updated.connect(self._on_progress_update)
-        self.worker.overall_progress_updated.connect(self._on_overall_progress_update)
-        self.worker.finished.connect(self._on_finished)
+        self.worker.progress_received.connect(self._on_progress, Qt.ConnectionType.QueuedConnection)
+        self.worker.progress_updated.connect(self._on_progress_update, Qt.ConnectionType.QueuedConnection)
+        self.worker.overall_progress_updated.connect(self._on_overall_progress_update, Qt.ConnectionType.QueuedConnection)
+        self.worker.finished.connect(self._on_finished, Qt.ConnectionType.QueuedConnection)
         self.thread.start()
 
     def _cancel_and_close(self):
@@ -188,16 +188,17 @@ class WeightDownloadDialog(QDialog):
             self.worker.stop()
         if hasattr(self, 'thread') and self.thread is not None and self.thread.isRunning():
             self.thread.quit()
-            self.thread.wait(1500)
-            if self.thread.isRunning():
-                self.thread.terminate()
-                self.thread.wait(500)
+            if QThread.currentThread() != self.thread:
+                self.thread.wait(1000)
+                if self.thread.isRunning():
+                    self.thread.terminate()
+                    self.thread.wait(300)
 
     def _on_close_clicked(self):
+        self._cancel_and_close()
         if self.btn_close.text() == "Close":
             self.accept()
         else:
-            self._cancel_and_close()
             super().reject()
 
     def reject(self):
@@ -228,7 +229,6 @@ class WeightDownloadDialog(QDialog):
     def _on_finished(self, success: bool, msg: str):
         if hasattr(self, 'thread') and self.thread is not None and self.thread.isRunning():
             self.thread.quit()
-            self.thread.wait(500)
         self.pbar.setValue(100 if success else 0)
         self.log_view.append(f"\nStatus: {msg}")
         self.btn_close.setText("Close")
@@ -297,12 +297,11 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {BG_CANVAS}; }}")
 
-        # 1. Left Column: Media & Queue Panel
+        # 1. Left Column: Unified Media & Batch Panel
         self.media_panel = MediaPanel()
         self.media_panel.clip_selected.connect(self._on_clip_selected)
-        self.media_panel.queue_selected_requested.connect(self._on_queue_selected_clip)
-        self.media_panel.queue_all_requested.connect(self._on_queue_all_clips)
-        self.media_panel.start_queue_requested.connect(self._process_next_in_queue)
+        self.media_panel.render_all_requested.connect(self._on_render_all_clips)
+        self.media_panel.stop_batch_requested.connect(self._on_stop_batch)
         splitter.addWidget(self.media_panel)
 
         # 2. Center Column: Viewport & Timeline
@@ -424,8 +423,7 @@ class MainWindow(QMainWindow):
 
         # 3. Right Column: Inspector Panel
         self.inspector = InspectorPanel()
-        self.inspector.render_requested.connect(self._start_render)
-        self.inspector.add_queue_requested.connect(self._add_to_queue)
+        self.inspector.render_requested.connect(self._on_render_active_clip)
         self.inspector.download_weights_requested.connect(self._open_weight_downloader)
         self.inspector.hint_changed.connect(self._on_hint_changed)
         splitter.addWidget(self.inspector)
@@ -528,14 +526,16 @@ class MainWindow(QMainWindow):
 
     def _prompt_engine_install(self):
         if not EngineManager.is_engine_installed():
-            reply = QMessageBox.question(
-                self,
-                "CorridorKey 2.0 Engine Required",
-                "The core CorridorKey 2.0 engine was not found in ./engine/.\n\n"
-                "Would you like to download/clone the engine from GitHub now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("CorridorKey 2.0 Engine Setup")
+            msg.setText("The core CorridorKey 2.0 engine was not found in ./engine/.")
+            msg.setInformativeText("Would you like to download it from GitHub, or locate an existing CorridorKey folder on your disk?")
+            btn_download = msg.addButton("Download from GitHub", QMessageBox.ButtonRole.AcceptRole)
+            btn_locate = msg.addButton("Locate Existing Folder...", QMessageBox.ButtonRole.ActionRole)
+            btn_cancel = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            msg.exec()
+
+            if msg.clickedButton() == btn_download:
                 self.lbl_status.setText("Installing CorridorKey engine...")
                 success = EngineManager.install_or_update_engine()
                 if success:
@@ -543,18 +543,25 @@ class MainWindow(QMainWindow):
                     self.lbl_status.setText("Ready")
                 else:
                     QMessageBox.warning(self, "Installation Failed", "Could not install engine. Check your network connection.")
+            elif msg.clickedButton() == btn_locate:
+                folder = QFileDialog.getExistingDirectory(self, "Select Existing CorridorKey 2.0 Folder")
+                if folder:
+                    if EngineManager.link_existing_engine(folder):
+                        QMessageBox.information(self, "Engine Linked", f"Successfully linked CorridorKey engine from:\n{folder}")
+                        self.lbl_status.setText("Ready")
+                    else:
+                        QMessageBox.warning(self, "Invalid Folder", "The selected folder does not contain 'infer.py'. Please select the root CorridorKey 2.0 repository folder.")
 
     def _check_engine_updates_async(self):
-        class UpdateChecker(QThread):
-            update_found = Signal(str, str)
-            def run(self):
+        def _bg():
+            try:
                 info = EngineManager.check_for_updates()
                 if info:
-                    self.update_found.emit(info[0], info[1])
-
-        self._update_thread = UpdateChecker(self)
-        self._update_thread.update_found.connect(self._on_engine_update_found)
-        self._update_thread.start()
+                    QTimer.singleShot(0, lambda: self._on_engine_update_found(info[0], info[1]))
+            except Exception:
+                pass
+        import threading
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _on_engine_update_found(self, commit_hash: str, msg: str):
         self.btn_engine_update.setText(f"⚡ Update Engine ({commit_hash})")
@@ -579,16 +586,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Update Failed", "Could not update engine automatically. Check your git configuration or network.")
 
     def _check_gui_updates_async(self):
-        class GUIUpdateChecker(QThread):
-            update_found = Signal(str, str)
-            def run(self):
+        def _bg():
+            try:
                 info = AppUpdater.check_for_update()
                 if info:
-                    self.update_found.emit(info[0], info[1])
-
-        self._gui_update_thread = GUIUpdateChecker(self)
-        self._gui_update_thread.update_found.connect(self._on_gui_update_found)
-        self._gui_update_thread.start()
+                    QTimer.singleShot(0, lambda: self._on_gui_update_found(info[0], info[1]))
+            except Exception:
+                pass
+        import threading
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _on_gui_update_found(self, short_sha: str, msg: str):
         self.btn_gui_update.setText(f"⚡ Update GUI ({short_sha})")
@@ -699,48 +705,51 @@ class MainWindow(QMainWindow):
         dlg.exec()
         self.inspector._check_weights_exist()
 
-    def _on_queue_selected_clip(self, clip: ClipInfo):
-        task = self.inspector.get_render_task(clip)
-        if task:
-            self._add_to_queue(task)
+    def _on_render_active_clip(self, task: RenderTask):
+        if self.active_runner is not None:
+            QMessageBox.warning(self, "Render Busy", "Another render process is already active.")
+            return
+        self.render_queue = [task]
+        self._process_next_in_queue()
 
-    def _on_queue_all_clips(self, clips: List[ClipInfo]):
-        count = 0
-        for clip in clips:
+    def _on_render_all_clips(self):
+        if not self.media_panel.clips:
+            return
+        if self.active_runner is not None:
+            QMessageBox.warning(self, "Render Busy", "Another render process is already active.")
+            return
+
+        self.render_queue.clear()
+        for clip in self.media_panel.clips:
             task = self.inspector.get_render_task(clip)
             if task:
-                self._add_to_queue(task)
-                count += 1
-        self.lbl_status.setText(f"In Queue: {len(self.render_queue)} clips")
+                self.render_queue.append(task)
+                self.media_panel.set_clip_status(clip.path, "Queued")
 
-    def _add_to_queue(self, task: RenderTask):
-        self.render_queue.append(task)
-        item = self.media_panel.add_queue_item(task.task_id, task.clip_name, "Queued")
-        self.queue_items_map[task.task_id] = item
-        self.lbl_status.setText(f"In Queue: {len(self.render_queue)} tasks")
+        if self.render_queue:
+            self.media_panel.set_batch_running(True)
+            self._process_next_in_queue()
+
+    def _on_stop_batch(self):
+        self.render_queue.clear()
+        if self.active_runner is not None:
+            self.active_runner.cancel()
+        self.media_panel.set_batch_running(False)
+        self.lbl_status.setText("Batch Stopped")
 
     def _process_next_in_queue(self):
         if self.active_runner is not None:
             return
         if not self.render_queue:
-            self.lbl_status.setText("Queue is empty")
+            self.media_panel.set_batch_running(False)
+            self.lbl_status.setText("All tasks completed")
             return
 
         next_task = self.render_queue.pop(0)
         self._start_render(next_task)
 
     def _start_render(self, task: RenderTask):
-        if self.active_runner is not None:
-            QMessageBox.warning(self, "Render Busy", "Another render process is already active.")
-            return
-
-        item = self.queue_items_map.get(task.task_id)
-        if item is None:
-            item = self.media_panel.add_queue_item(task.task_id, task.clip_name, "Rendering...")
-            self.queue_items_map[task.task_id] = item
-
-        item.status_label.setText("Rendering...")
-        item.status_label.setStyleSheet(f"color: {ACCENT_CYAN}; font-weight: 600;")
+        self.media_panel.set_clip_status(task.clip_path, "Rendering", 0.0)
         self.lbl_status.setText(f"Rendering: {task.clip_name}")
         self.lbl_status.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 11px; font-weight: 600;")
 
@@ -752,44 +761,44 @@ class MainWindow(QMainWindow):
 
         self.active_thread.started.connect(self.active_runner.run)
         self.active_runner.progress_changed.connect(
-            lambda tid, cur, tot, pct, status: self._on_render_progress(item, pct, status)
+            lambda tid, cur, tot, pct, status: self._on_render_progress(task.clip_path, pct, status),
+            Qt.ConnectionType.QueuedConnection
         )
         self.active_runner.finished.connect(
-            lambda tid, success, msg: self._on_render_finished(item, success, msg)
+            lambda tid, success, msg: self._on_render_finished(task.clip_path, success, msg),
+            Qt.ConnectionType.QueuedConnection
         )
 
         self.active_thread.start()
 
-    def _on_render_progress(self, queue_item, pct: float, status: str):
-        queue_item.pbar.setValue(int(pct))
-        queue_item.status_label.setText(f"{pct:.0f}%")
+    def _on_render_progress(self, clip_path: str, pct: float, status: str):
+        self.media_panel.set_clip_status(clip_path, "Rendering", pct)
         self.lbl_status.setText(status)
 
-    def _on_render_finished(self, queue_item, success: bool, msg: str):
+    def _on_render_finished(self, clip_path: str, success: bool, msg: str):
         self.inspector.btn_render.setEnabled(True)
+        self.media_panel.set_clip_status(clip_path, "Done" if success else "Error")
 
         if success:
-            queue_item.status_label.setText("Done")
-            queue_item.status_label.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-weight: 600;")
-            queue_item.pbar.setValue(100)
-            self.lbl_status.setText("Done")
+            self.lbl_status.setText(f"Done: {Path(clip_path).name}")
             self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
         else:
-            queue_item.status_label.setText("Error")
-            queue_item.status_label.setStyleSheet("color: #FF5252; font-weight: 600;")
-            self.lbl_status.setText("Render Error")
+            self.lbl_status.setText(f"Error: {msg}")
             self.lbl_status.setStyleSheet("color: #FF5252; font-size: 11px; font-weight: 600;")
 
-        if self.active_thread is not None:
+        if self.active_thread is not None and self.active_thread.isRunning():
             self.active_thread.quit()
-            self.active_thread.wait()
-            self.active_thread = None
+            if QThread.currentThread() != self.active_thread:
+                self.active_thread.wait(1000)
+        self.active_thread = None
         self.active_runner = None
 
         if self.render_queue:
             self._process_next_in_queue()
-        elif success:
-            QMessageBox.information(self, "Rendering Finished", "All render tasks completed successfully!")
+        else:
+            self.media_panel.set_batch_running(False)
+            if success:
+                QMessageBox.information(self, "Rendering Finished", "All render tasks completed successfully!")
 
     # Drag and Drop support
     def dragEnterEvent(self, event: QDragEnterEvent):

@@ -23,190 +23,24 @@ from gui.backend.video_loader import ClipInfo, probe_clip, scan_directory_for_cl
 from gui.styles.theme import (
     ACCENT_BLUE,
     ACCENT_CYAN,
-    CORRIDOR_YELLOW,
     CORRIDOR_GREEN,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
     TEXT_MUTED,
 )
 
 
-def create_flat_card() -> QFrame:
-    card = QFrame()
-    card.setProperty("class", "flat-card")
-    card.setStyleSheet("""
-        QFrame.flat-card {
-            background-color: #1A1A1E;
-            border: 1px solid #28282E;
-            border-radius: 8px;
-        }
-    """)
-    return card
+class ClipRow(QFrame):
+    """Individual clip card with thumbnail, metadata, hint badge, and real-time status/progress."""
 
-
-class MediaPanel(QWidget):
-    """Media browser and queue in English with detailed Russian hover tooltips."""
-
-    clip_selected = Signal(ClipInfo)
-    queue_selected_requested = Signal(ClipInfo)
-    queue_all_requested = Signal(list)
-    start_queue_requested = Signal()
-
-    def __init__(self, parent=None):
+    def __init__(self, clip: ClipInfo, on_select_cb, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(290)
-
-        self.clips: List[ClipInfo] = []
-        self.selected_clip: Optional[ClipInfo] = None
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
-
-        # 1. Media Library Card
-        media_card = create_flat_card()
-        mc_layout = QVBoxLayout(media_card)
-        mc_layout.setContentsMargins(10, 10, 10, 10)
-        mc_layout.setSpacing(8)
-
-        m_head = QHBoxLayout()
-        lbl_m = QLabel("Clips")
-        lbl_m.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700; border: none; background: transparent;")
-        lbl_m.setToolTip("<b>Clips (Медиатека)</b><br>Список загруженных видеофайлов и секвенций кадров.<br>Кликните по клипу для выбора и настройки.")
-        m_head.addWidget(lbl_m)
-        m_head.addStretch()
-
-        btn_add_f = QPushButton("+ File")
-        btn_add_f.setIcon(FI.DOCUMENT.icon(Theme.DARK))
-        btn_add_f.setIconSize(QSize(12, 12))
-        btn_add_f.setProperty("class", "pill-btn")
-        btn_add_f.setToolTip("<b>+ File (Добавить файл, Ctrl+O)</b><br>Открыть видеофайл (MP4, MOV, MKV, AVI) или первый кадр секвенции (EXR, PNG, JPG).")
-        btn_add_f.clicked.connect(self._on_import_file)
-        m_head.addWidget(btn_add_f)
-
-        btn_add_dir = QPushButton("+ Folder")
-        btn_add_dir.setIcon(FI.FOLDER.icon(Theme.DARK))
-        btn_add_dir.setIconSize(QSize(12, 12))
-        btn_add_dir.setProperty("class", "pill-btn")
-        btn_add_dir.setToolTip("<b>+ Folder (Импорт папки, Ctrl+Shift+O)</b><br>Сканировать каталог на наличие видео или загрузить папку с секвенцией кадров.")
-        btn_add_dir.clicked.connect(self._on_import_folder)
-        m_head.addWidget(btn_add_dir)
-        mc_layout.addLayout(m_head)
-
-        # Scroll area for clips
-        self.scroll = QScrollArea(self)
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("border: none; background: transparent;")
-
-        self.clip_list_container = QWidget(self.scroll)
-        self.clip_list_layout = QVBoxLayout(self.clip_list_container)
-        self.clip_list_layout.setContentsMargins(0, 0, 0, 0)
-        self.clip_list_layout.setSpacing(4)
-        self.clip_list_layout.addStretch()
-
-        self.scroll.setWidget(self.clip_list_container)
-        mc_layout.addWidget(self.scroll, stretch=1)
-
-        q_btn_row = QHBoxLayout()
-        q_btn_row.setSpacing(6)
-
-        self.btn_queue_selected = QPushButton("+ Queue Clip")
-        self.btn_queue_selected.setProperty("class", "pill-btn")
-        self.btn_queue_selected.setToolTip("<b>+ Queue Clip (Добавить клип в очередь)</b><br>Добавить выбранный клип в список очереди рендера.")
-        self.btn_queue_selected.clicked.connect(self._on_queue_selected)
-        q_btn_row.addWidget(self.btn_queue_selected)
-
-        self.btn_queue_all = QPushButton("Queue All")
-        self.btn_queue_all.setProperty("class", "pill-btn")
-        self.btn_queue_all.setToolTip("<b>Queue All (Добавить все в очередь)</b><br>Отправить все клипы из списка в очередь рендера с текущими настройками.")
-        self.btn_queue_all.clicked.connect(self._on_queue_all)
-        q_btn_row.addWidget(self.btn_queue_all)
-
-        mc_layout.addLayout(q_btn_row)
-
-        layout.addWidget(media_card, stretch=3)
-
-        # 2. Queue Card
-        queue_card = create_flat_card()
-        qc_layout = QVBoxLayout(queue_card)
-        qc_layout.setContentsMargins(10, 10, 10, 10)
-        qc_layout.setSpacing(6)
-
-        q_head = QHBoxLayout()
-        lbl_q = QLabel("Queue")
-        lbl_q.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700; border: none; background: transparent;")
-        lbl_q.setToolTip("<b>Queue (Очередь задач)</b><br>Список заданий для последовательного пакетного рендеринга CorridorKey.")
-        q_head.addWidget(lbl_q)
-        q_head.addStretch()
-
-        btn_start_q = QPushButton("Start")
-        btn_start_q.setIcon(FI.PLAY.icon(Theme.DARK))
-        btn_start_q.setIconSize(QSize(11, 11))
-        btn_start_q.setProperty("class", "pill-btn")
-        btn_start_q.setToolTip("<b>Start (Запуск очереди)</b><br>Начать последовательную обработку всех заданий в очереди.")
-        btn_start_q.clicked.connect(self.start_queue_requested.emit)
-        q_head.addWidget(btn_start_q)
-
-        btn_clear = QPushButton("Clear")
-        btn_clear.setIcon(FI.DELETE.icon(Theme.DARK))
-        btn_clear.setIconSize(QSize(11, 11))
-        btn_clear.setStyleSheet(f"border: none; color: {TEXT_MUTED}; font-size: 11px; padding: 2px 4px; background: transparent;")
-        btn_clear.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_clear.setToolTip("<b>Clear (Очистить очередь)</b><br>Удалить все ожидающие задания из списка.")
-        btn_clear.clicked.connect(self.clear_queue)
-        q_head.addWidget(btn_clear)
-        qc_layout.addLayout(q_head)
-
-        self.q_scroll = QScrollArea(self)
-        self.q_scroll.setWidgetResizable(True)
-        self.q_scroll.setStyleSheet("border: none; background: transparent;")
-
-        self.q_container = QWidget(self.q_scroll)
-        self.q_layout = QVBoxLayout(self.q_container)
-        self.q_layout.setContentsMargins(0, 0, 0, 0)
-        self.q_layout.setSpacing(4)
-
-        self.lbl_empty_queue = QLabel("Queue is empty")
-        self.lbl_empty_queue.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 4px; border: none; background: transparent;")
-        self.lbl_empty_queue.setToolTip("Очередь пуста. Добавьте клипы кнопкой 'Add to Queue' в панели Deliver.")
-        self.q_layout.addWidget(self.lbl_empty_queue)
-        self.q_layout.addStretch()
-
-        self.q_scroll.setWidget(self.q_container)
-        qc_layout.addWidget(self.q_scroll, stretch=1)
-
-        layout.addWidget(queue_card, stretch=2)
-
-    def add_clip(self, clip_path: str):
-        clip = probe_clip(clip_path)
-        if clip is not None:
-            for existing in self.clips:
-                if existing.path == clip.path:
-                    self.select_clip(existing)
-                    return
-            self.clips.append(clip)
-            row = self._create_clip_row(clip)
-            self.clip_list_layout.insertWidget(self.clip_list_layout.count() - 1, row)
-            self.select_clip(clip)
-
-    def add_clips_batch(self, clips: List[ClipInfo]):
-        for clip in clips:
-            if not any(c.path == clip.path for c in self.clips):
-                self.clips.append(clip)
-                row = self._create_clip_row(clip)
-                self.clip_list_layout.insertWidget(self.clip_list_layout.count() - 1, row)
-        if self.clips and not self.selected_clip:
-            self.select_clip(self.clips[0])
-
-    def _create_clip_row(self, clip: ClipInfo) -> QFrame:
-        row = QFrame()
-        row.setObjectName("clipRow")
-        row.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        row.setFixedHeight(44)
-        row.clip = clip
+        self.clip = clip
+        self._on_select = on_select_cb
+        self.setObjectName("clipRow")
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setFixedHeight(54)
 
         hint_status = f"<br>Alpha Hint: найден ({os.path.basename(clip.discovered_hint_path)})" if clip.discovered_hint_path else ""
-        row.setToolTip(
+        self.setToolTip(
             f"<b>{clip.name}</b><br>"
             f"Путь: {clip.path}<br>"
             f"Разрешение: {clip.width}x{clip.height}<br>"
@@ -215,50 +49,112 @@ class MediaPanel(QWidget):
             f"Кликните для выбора клипа."
         )
 
-        rl = QVBoxLayout(row)
+        rl = QVBoxLayout(self)
         rl.setContentsMargins(10, 5, 10, 5)
-        rl.setSpacing(2)
+        rl.setSpacing(3)
 
-        # Top row: Clip Name
-        name_lbl = QLabel(clip.name)
-        name_lbl.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 600; border: none; background: transparent;")
-        rl.addWidget(name_lbl)
+        # Top row: Name + Status Badge
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(6)
 
-        # Bottom row: Metadata + Hint Badge
+        self.name_lbl = QLabel(clip.name)
+        self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 600; border: none; background: transparent;")
+        top_row.addWidget(self.name_lbl, stretch=1)
+
+        self.status_badge = QLabel("Ready")
+        self.status_badge.setStyleSheet(
+            "color: #94A3B8; font-size: 10px; font-weight: 700; background: #202026; "
+            "border: 1px solid #303038; border-radius: 3px; padding: 1px 5px;"
+        )
+        top_row.addWidget(self.status_badge)
+        rl.addLayout(top_row)
+
+        # Bottom row: Meta + Hint Badge
         bot_row = QHBoxLayout()
         bot_row.setContentsMargins(0, 0, 0, 0)
         bot_row.setSpacing(6)
 
-        info_lbl = QLabel(f"{clip.total_frames} frames  ·  {clip.resolution_label}  ·  {clip.fps:.0f} fps")
-        info_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; border: none; background: transparent;")
-        bot_row.addWidget(info_lbl, stretch=1)
+        self.info_lbl = QLabel(f"{clip.total_frames}f · {clip.resolution_label} · {clip.fps:.0f}fps")
+        self.info_lbl.setStyleSheet("color: #64748B; font-size: 10px; border: none; background: transparent;")
+        bot_row.addWidget(self.info_lbl, stretch=1)
 
         if clip.discovered_hint_path:
-            hint_badge = QLabel("HINT")
-            hint_badge.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 9px; font-weight: 700; border: none; background: transparent;")
-            bot_row.addWidget(hint_badge)
+            self.hint_badge = QLabel("HINT")
+            self.hint_badge.setStyleSheet("color: #10B981; font-size: 9px; font-weight: 700; border: none; background: transparent;")
+            bot_row.addWidget(self.hint_badge)
 
         rl.addLayout(bot_row)
 
-        row.mousePressEvent = lambda e: self.select_clip(clip)
-        self._update_row_style(row, is_selected=False)
-        return row
+        # Embedded Progress bar (visible during active inference)
+        self.pbar = QProgressBar()
+        self.pbar.setFixedHeight(3)
+        self.pbar.setTextVisible(False)
+        self.pbar.setRange(0, 100)
+        self.pbar.setValue(0)
+        self.pbar.setStyleSheet("""
+            QProgressBar { background: #222228; border: none; border-radius: 1px; }
+            QProgressBar::chunk { background: #00D2FF; border-radius: 1px; }
+        """)
+        self.pbar.hide()
+        rl.addWidget(self.pbar)
 
-    def _update_row_style(self, row: QFrame, is_selected: bool):
-        if is_selected:
-            row.setStyleSheet(f"""
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_select(self.clip)
+        super().mousePressEvent(event)
+
+    def set_status(self, status: str, pct: float = -1.0):
+        s_lower = status.lower()
+        if "render" in s_lower or "process" in s_lower:
+            self.status_badge.setText(f"{int(pct)}%" if pct >= 0 else "Rendering")
+            self.status_badge.setStyleSheet(
+                "color: #00D2FF; font-weight: 700; background: #12222E; "
+                "border: 1px solid #00D2FF; border-radius: 3px; padding: 1px 5px;"
+            )
+            self.pbar.show()
+            if pct >= 0:
+                self.pbar.setValue(int(pct))
+        elif "done" in s_lower or "complete" in s_lower:
+            self.status_badge.setText("Done")
+            self.status_badge.setStyleSheet(
+                "color: #10B981; font-weight: 700; background: #12281C; "
+                "border: 1px solid #10B981; border-radius: 3px; padding: 1px 5px;"
+            )
+            self.pbar.hide()
+        elif "error" in s_lower or "fail" in s_lower:
+            self.status_badge.setText("Error")
+            self.status_badge.setStyleSheet(
+                "color: #EF4444; font-weight: 700; background: #281418; "
+                "border: 1px solid #EF4444; border-radius: 3px; padding: 1px 5px;"
+            )
+            self.pbar.hide()
+        elif "queued" in s_lower:
+            self.status_badge.setText("Queued")
+            self.status_badge.setStyleSheet(
+                "color: #38BDF8; font-weight: 700; background: #16202A; "
+                "border: 1px solid #38BDF8; border-radius: 3px; padding: 1px 5px;"
+            )
+            self.pbar.hide()
+        else:
+            self.status_badge.setText("Ready")
+            self.status_badge.setStyleSheet(
+                "color: #94A3B8; font-size: 10px; font-weight: 700; background: #202026; "
+                "border: 1px solid #303038; border-radius: 3px; padding: 1px 5px;"
+            )
+            self.pbar.hide()
+
+    def set_selected(self, selected: bool):
+        if selected:
+            self.setStyleSheet(f"""
                 QFrame#clipRow {{
-                    background-color: #222228;
+                    background-color: #22222A;
                     border: 1px solid {ACCENT_BLUE};
                     border-radius: 6px;
                 }}
-                QFrame#clipRow QLabel {{
-                    border: none;
-                    background: transparent;
-                }}
             """)
         else:
-            row.setStyleSheet("""
+            self.setStyleSheet("""
                 QFrame#clipRow {
                     background-color: #17171B;
                     border: 1px solid #28282E;
@@ -268,49 +164,230 @@ class MediaPanel(QWidget):
                     background-color: #1E1E24;
                     border: 1px solid #383842;
                 }
-                QFrame#clipRow QLabel {
-                    border: none;
-                    background: transparent;
-                }
             """)
+
+
+class MediaPanel(QWidget):
+    """
+    Unified Media Library and Batch Processing Panel.
+    Eliminates duplicated queues, redundant copy steps, and conflicting render buttons.
+    """
+
+    clip_selected = Signal(ClipInfo)
+    render_all_requested = Signal()
+    stop_batch_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(290)
+
+        self.clips: List[ClipInfo] = []
+        self.selected_clip: Optional[ClipInfo] = None
+        self._clip_rows: Dict[str, ClipRow] = {}
+        self._is_batch_running: bool = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        # Single Flat Container
+        container = QFrame()
+        container.setObjectName("mediaContainer")
+        container.setStyleSheet("""
+            QFrame#mediaContainer {
+                background-color: #16161A;
+                border: 1px solid #28282E;
+                border-radius: 8px;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(10, 10, 10, 10)
+        c_layout.setSpacing(8)
+
+        # 1. Header Row
+        head_row = QHBoxLayout()
+        self.lbl_title = QLabel("Clips (0)")
+        self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700; border: none; background: transparent;")
+        self.lbl_title.setToolTip("<b>Clips (Список клипов)</b><br>Загруженные видео и секвенции кадров для обработки.")
+        head_row.addWidget(self.lbl_title)
+        head_row.addStretch()
+
+        btn_add_f = QPushButton("+ File")
+        btn_add_f.setIcon(FI.DOCUMENT.icon(Theme.DARK))
+        btn_add_f.setIconSize(QSize(12, 12))
+        btn_add_f.setProperty("class", "pill-btn")
+        btn_add_f.setToolTip("<b>+ File (Ctrl+O)</b><br>Открыть видеофайл (MP4, MOV, MKV, AVI) или первый кадр секвенции.")
+        btn_add_f.clicked.connect(self._on_import_file)
+        head_row.addWidget(btn_add_f)
+
+        btn_add_dir = QPushButton("+ Folder")
+        btn_add_dir.setIcon(FI.FOLDER.icon(Theme.DARK))
+        btn_add_dir.setIconSize(QSize(12, 12))
+        btn_add_dir.setProperty("class", "pill-btn")
+        btn_add_dir.setToolTip("<b>+ Folder (Ctrl+Shift+O)</b><br>Сканировать каталог на наличие видео или загрузить папку с секвенцией кадров.")
+        btn_add_dir.clicked.connect(self._on_import_folder)
+        head_row.addWidget(btn_add_dir)
+
+        btn_clear = QPushButton()
+        btn_clear.setIcon(FI.DELETE.icon(Theme.DARK))
+        btn_clear.setIconSize(QSize(12, 12))
+        btn_clear.setFixedSize(24, 24)
+        btn_clear.setStyleSheet("QPushButton { background-color: #202026; border: 1px solid #303038; border-radius: 4px; } QPushButton:hover { background-color: #2A2A34; }")
+        btn_clear.setToolTip("<b>Clear All (Очистить список)</b><br>Удалить все клипы из списка.")
+        btn_clear.clicked.connect(self.clear_clips)
+        head_row.addWidget(btn_clear)
+
+        c_layout.addLayout(head_row)
+
+        # 2. Scroll Area for Clips
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("border: none; background: transparent;")
+
+        self.list_widget = QWidget(self.scroll)
+        self.list_layout = QVBoxLayout(self.list_widget)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
+        self.list_layout.setSpacing(4)
+
+        self.lbl_empty = QLabel("No clips added.\nClick '+ File', '+ Folder', or drag & drop video here.")
+        self.lbl_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_empty.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 20px; border: none; background: transparent;")
+        self.list_layout.addWidget(self.lbl_empty)
+        self.list_layout.addStretch()
+
+        self.scroll.setWidget(self.list_widget)
+        c_layout.addWidget(self.scroll, stretch=1)
+
+        # 3. Footer Batch Action
+        self.btn_batch = QPushButton("⚡ Render All Clips")
+        self.btn_batch.setProperty("class", "pill-btn")
+        self.btn_batch.setFixedHeight(30)
+        self.btn_batch.setStyleSheet("""
+            QPushButton {
+                background-color: #202028;
+                border: 1px solid #38BDF8;
+                color: #FFFFFF;
+                font-weight: 700;
+                font-size: 11px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #0284C7;
+                border-color: #38BDF8;
+            }
+        """)
+        self.btn_batch.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_batch.setToolTip("<b>Render All Clips (Пакетный рендер)</b><br>Последовательно запустить обработку всех клипов в списке.")
+        self.btn_batch.clicked.connect(self._on_batch_btn_clicked)
+        self.btn_batch.setEnabled(False)
+        c_layout.addWidget(self.btn_batch)
+
+        layout.addWidget(container)
+
+    def add_clip(self, clip_path: str):
+        clip = probe_clip(clip_path)
+        if clip is not None:
+            for existing in self.clips:
+                if existing.path == clip.path:
+                    self.select_clip(existing)
+                    return
+            self.clips.append(clip)
+            self._render_clip_row(clip)
+            self.select_clip(clip)
+            self._update_header_and_buttons()
+
+    def add_clips_batch(self, clips: List[ClipInfo]):
+        for clip in clips:
+            if not any(c.path == clip.path for c in self.clips):
+                self.clips.append(clip)
+                self._render_clip_row(clip)
+        if self.clips and not self.selected_clip:
+            self.select_clip(self.clips[0])
+        self._update_header_and_buttons()
+
+    def _render_clip_row(self, clip: ClipInfo):
+        self.lbl_empty.hide()
+        row = ClipRow(clip, on_select_cb=self.select_clip)
+        self._clip_rows[clip.path] = row
+        # Insert before bottom stretch
+        self.list_layout.insertWidget(self.list_layout.count() - 1, row)
 
     def select_clip(self, clip: ClipInfo):
         self.selected_clip = clip
-        for i in range(self.clip_list_layout.count() - 1):
-            w = self.clip_list_layout.itemAt(i).widget()
-            if isinstance(w, QFrame) and hasattr(w, "clip"):
-                self._update_row_style(w, is_selected=(w.clip.path == clip.path))
+        for path, row in self._clip_rows.items():
+            row.set_selected(path == clip.path)
         self.clip_selected.emit(clip)
 
-    def add_queue_item(self, task_id: str, title: str, status: str = "Queued"):
-        self.lbl_empty_queue.hide()
-        item = QueueItemWidget(task_id, title, status)
-        self.q_layout.insertWidget(self.q_layout.count() - 1, item)
-        return item
+    def set_clip_status(self, clip_path: str, status: str, pct: float = -1.0):
+        if clip_path in self._clip_rows:
+            self._clip_rows[clip_path].set_status(status, pct)
 
-    def clear_queue(self):
-        while self.q_layout.count() > 1:
-            item = self.q_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self.lbl_empty_queue.show()
+    def set_batch_running(self, running: bool):
+        self._is_batch_running = running
+        if running:
+            self.btn_batch.setText("⏹ Stop Batch")
+            self.btn_batch.setStyleSheet("""
+                QPushButton {
+                    background-color: #7F1D1D;
+                    border: 1px solid #EF4444;
+                    color: #FFFFFF;
+                    font-weight: 700;
+                    font-size: 11px;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #991B1B;
+                }
+            """)
+        else:
+            self.btn_batch.setText("⚡ Render All Clips")
+            self.btn_batch.setStyleSheet("""
+                QPushButton {
+                    background-color: #202028;
+                    border: 1px solid #38BDF8;
+                    color: #FFFFFF;
+                    font-weight: 700;
+                    font-size: 11px;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #0284C7;
+                    border-color: #38BDF8;
+                }
+            """)
+
+    def _on_batch_btn_clicked(self):
+        if self._is_batch_running:
+            self.stop_batch_requested.emit()
+        else:
+            self.render_all_requested.emit()
+
+    def clear_clips(self):
+        self.clips.clear()
+        self.selected_clip = None
+        for row in self._clip_rows.values():
+            row.deleteLater()
+        self._clip_rows.clear()
+        self.lbl_empty.show()
+        self._update_header_and_buttons()
+
+    def _update_header_and_buttons(self):
+        n = len(self.clips)
+        self.lbl_title.setText(f"Clips ({n})")
+        self.btn_batch.setEnabled(n > 0)
 
     def _on_import_file(self):
         fpath, _ = QFileDialog.getOpenFileName(
             self,
-            "Open Video or First Frame of Sequence",
+            "Select Video or Image Sequence",
             "",
-            "Media Files (*.mp4 *.mov *.avi *.mkv *.exr *.png *.jpg);;All Files (*.*)",
+            "Video Files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v);;Images (*.exr *.png *.jpg *.jpeg *.tif *.tiff);;All Files (*.*)",
         )
         if fpath:
             self.add_clip(fpath)
 
     def _on_import_folder(self):
-        dpath = QFileDialog.getExistingDirectory(
-            self,
-            "Import Directory with Media or Frame Sequence",
-            "",
-        )
+        dpath = QFileDialog.getExistingDirectory(self, "Select Folder Containing Clips or Image Sequences")
         if dpath:
             single = probe_clip(dpath)
             if single and single.is_frame_dir:
@@ -321,67 +398,3 @@ class MediaPanel(QWidget):
                     self.add_clips_batch(found)
                 elif single:
                     self.add_clip(dpath)
-
-    def _on_queue_selected(self):
-        if self.selected_clip is not None:
-            self.queue_selected_requested.emit(self.selected_clip)
-        elif self.clips:
-            self.queue_selected_requested.emit(self.clips[0])
-
-    def _on_queue_all(self):
-        if self.clips:
-            self.queue_all_requested.emit(self.clips)
-
-
-class QueueItemWidget(QFrame):
-    """Queue card showing clip name and progress."""
-
-    def __init__(self, task_id: str, title: str, status: str = "Queued", parent=None):
-        super().__init__(parent)
-        self.task_id = task_id
-        self.setObjectName("queueItem")
-        self.setFixedHeight(36)
-        self.setStyleSheet("""
-            QFrame#queueItem {
-                background-color: #17171B;
-                border: 1px solid #28282E;
-                border-radius: 4px;
-            }
-            QFrame#queueItem QLabel {
-                border: none;
-                background: transparent;
-            }
-        """)
-        self.setToolTip(f"<b>Задание рендера</b><br>Клип: {title}<br>ID задачи: {task_id}<br>Статус: {status}")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(3)
-
-        top = QHBoxLayout()
-        self.title_lbl = QLabel(title)
-        self.title_lbl.setStyleSheet("color: #EEEEEE; font-size: 11px; font-weight: 500;")
-        top.addWidget(self.title_lbl, stretch=1)
-
-        self.status_label = QLabel(status)
-        self.status_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; font-weight: 600;")
-        top.addWidget(self.status_label)
-        layout.addLayout(top)
-
-        self.pbar = QProgressBar()
-        self.pbar.setFixedHeight(2)
-        self.pbar.setTextVisible(False)
-        self.pbar.setRange(0, 100)
-        self.pbar.setValue(0)
-        self.pbar.setStyleSheet(f"""
-            QProgressBar {{
-                background-color: #222228;
-                border: none;
-                border-radius: 1px;
-            }}
-            QProgressBar::chunk {{
-                background-color: {ACCENT_BLUE};
-                border-radius: 1px;
-            }}
-        """)
-        layout.addWidget(self.pbar)

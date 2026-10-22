@@ -96,13 +96,14 @@ class RenderRunner(QObject):
 
     def run(self):
         root_dir = Path(__file__).resolve().parent.parent.parent
-        infer_script = root_dir / "engine" / "infer.py"
-        if not infer_script.is_file():
-            # Fallback check if infer.py is still at root
+        from gui.managers.engine_manager import EngineManager
+        infer_script = EngineManager.get_infer_script()
+        if infer_script is None or not infer_script.is_file():
+            # Fallback check if infer.py is at root
             if (root_dir / "infer.py").is_file():
                 infer_script = root_dir / "infer.py"
             else:
-                self.finished.emit(self.task.task_id, False, "CorridorKey engine not found in engine/infer.py. Please install engine first.")
+                self.finished.emit(self.task.task_id, False, "CorridorKey engine (infer.py) not found. Please download engine or link your existing CorridorKey folder.")
                 return
 
         # Ensure portable FFmpeg is in PATH if present in ./bin

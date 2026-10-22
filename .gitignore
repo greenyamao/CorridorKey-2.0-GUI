@@ -2,6 +2,7 @@
 
 # Engine layer (upstream CorridorKey 2.0 repository managed dynamically)
 engine/
+.engine_path
 
 # Weights layer (~5 GB model assets)
 weights/

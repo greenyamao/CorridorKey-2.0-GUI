@@ -28,13 +28,22 @@ class EngineManager:
 
     @staticmethod
     def get_engine_dir() -> Path:
+        custom_file = APP_ROOT / ".engine_path"
+        if custom_file.is_file():
+            try:
+                p = Path(custom_file.read_text("utf-8").strip())
+                if (p / "infer.py").is_file():
+                    return p
+            except Exception:
+                pass
         return ENGINE_DIR
 
     @classmethod
     def get_infer_script(cls) -> Optional[Path]:
         """Returns path to engine/infer.py if valid, otherwise None."""
-        infer_py = ENGINE_DIR / "infer.py"
-        corridorkey_pkg = ENGINE_DIR / "corridorkey"
+        engine_path = cls.get_engine_dir()
+        infer_py = engine_path / "infer.py"
+        corridorkey_pkg = engine_path / "corridorkey"
         if infer_py.is_file() and corridorkey_pkg.is_dir():
             return infer_py
         return None
@@ -47,9 +56,40 @@ class EngineManager:
         return installed
 
     @classmethod
+    def link_existing_engine(cls, source_folder: Path | str) -> bool:
+        """Links an existing CorridorKey 2.0 folder into ./engine/ or saves to .engine_path."""
+        src = Path(source_folder).resolve()
+        if not (src / "infer.py").is_file():
+            return False
+
+        # 1. Save path to .engine_path
+        try:
+            (APP_ROOT / ".engine_path").write_text(str(src), encoding="utf-8")
+        except Exception:
+            pass
+
+        # 2. Try creating directory junction ./engine -> src
+        if not ENGINE_DIR.exists() and not ENGINE_DIR.is_symlink():
+            try:
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["cmd", "/c", "mklink", "/J", str(ENGINE_DIR), str(src)],
+                        capture_output=True,
+                        timeout=5
+                    )
+                else:
+                    ENGINE_DIR.symlink_to(src, target_is_directory=True)
+            except Exception:
+                pass
+
+        cls.ensure_junctions()
+        return True
+
+    @classmethod
     def ensure_junctions(cls) -> None:
-        """Links root ./weights and ./vfms into ./engine/ via directory junctions/symlinks."""
-        if not ENGINE_DIR.is_dir():
+        """Links root ./weights and ./vfms into the engine directory."""
+        engine_dir = cls.get_engine_dir()
+        if not engine_dir.is_dir():
             return
         weights_dir = APP_ROOT / "weights"
         vfms_dir = APP_ROOT / "vfms"
@@ -57,7 +97,7 @@ class EngineManager:
         vfms_dir.mkdir(parents=True, exist_ok=True)
 
         for name, target in [("weights", weights_dir), ("vfms", vfms_dir)]:
-            engine_link = ENGINE_DIR / name
+            engine_link = engine_dir / name
             if not engine_link.exists():
                 try:
                     if sys.platform == "win32":
