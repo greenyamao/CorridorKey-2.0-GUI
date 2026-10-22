@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import cv2
 import numpy as np
 
 from PySide6.QtCore import Qt, QRect, QPoint, QRectF, Signal
@@ -78,33 +79,37 @@ class ViewportWidget(QWidget):
         alpha_matte: Optional[np.ndarray] = None,
         original_rgb: Optional[np.ndarray] = None,
     ):
-        """Update active frames from numpy arrays with clean memory buffers and proper alpha blending."""
-        if rgb_frame is not None:
-            rgb_frame = np.ascontiguousarray(rgb_frame)
-            if rgb_frame.dtype != np.uint8:
-                rgb_frame = np.clip(rgb_frame, 0, 255).astype(np.uint8)
-
-            h, w, c = rgb_frame.shape
-            self._current_frame = QImage(
-                rgb_frame.data, w, h, w * c, QImage.Format.Format_RGB888
-            ).copy()
-        else:
+        """Update active frames from numpy arrays with high-performance C++ OpenCV SIMD operations."""
+        if rgb_frame is None:
             self._current_frame = None
+            self._original_frame = None
+            self._alpha_frame = None
+            self._composite_frame = None
+            self._fg_frame = None
+            self.update()
+            return
 
-        if original_rgb is not None:
+        rgb_frame = np.ascontiguousarray(rgb_frame)
+        if rgb_frame.dtype != np.uint8:
+            rgb_frame = np.clip(rgb_frame, 0, 255).astype(np.uint8)
+
+        h, w, c = rgb_frame.shape
+        self._current_frame = QImage(
+            rgb_frame.data, w, h, w * c, QImage.Format.Format_RGB888
+        ).copy()
+
+        if original_rgb is not None and original_rgb is not rgb_frame:
             original_rgb = np.ascontiguousarray(original_rgb)
             if original_rgb.dtype != np.uint8:
                 original_rgb = np.clip(original_rgb, 0, 255).astype(np.uint8)
-            h, w, c = original_rgb.shape
+            oh, ow, oc = original_rgb.shape
             self._original_frame = QImage(
-                original_rgb.data, w, h, w * c, QImage.Format.Format_RGB888
+                original_rgb.data, ow, oh, ow * oc, QImage.Format.Format_RGB888
             ).copy()
-        elif rgb_frame is not None and self._original_frame is None:
+        else:
             self._original_frame = self._current_frame
 
-        if alpha_matte is not None and rgb_frame is not None:
-            h, w = rgb_frame.shape[:2]
-            # Ensure alpha is 2D uint8
+        if alpha_matte is not None:
             if alpha_matte.ndim == 3:
                 a = alpha_matte[:, :, 0]
             else:
@@ -112,27 +117,36 @@ class ViewportWidget(QWidget):
             if a.dtype != np.uint8:
                 a = (np.clip(a, 0.0, 1.0) * 255).astype(np.uint8)
 
-            # Ensure shapes match
             if a.shape[:2] == (h, w):
                 a = np.ascontiguousarray(a)
-                # 1. Grayscale mask image
-                self._alpha_frame = QImage(
-                    a.data, w, h, w, QImage.Format.Format_Grayscale8
-                ).copy()
+                need_wipe_or_sbs = self.display_mode in ("Wipe", "Side by side")
 
-                # 2. RGBA Composite image (alpha transparency)
-                rgba = np.dstack((rgb_frame[:, :, :3], a))
-                rgba = np.ascontiguousarray(rgba)
-                self._composite_frame = QImage(
-                    rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888
-                ).copy()
+                # 1. Grayscale Alpha Mask (only when needed)
+                if self.channel_mode == "Alpha" or need_wipe_or_sbs:
+                    self._alpha_frame = QImage(
+                        a.data, w, h, w, QImage.Format.Format_Grayscale8
+                    ).copy()
+                else:
+                    self._alpha_frame = None
 
-                # 3. Cutout Foreground over black
-                fg = (rgb_frame.astype(np.float32) * (a[:, :, None].astype(np.float32) / 255.0)).astype(np.uint8)
-                fg = np.ascontiguousarray(fg)
-                self._fg_frame = QImage(
-                    fg.data, w, h, w * 3, QImage.Format.Format_RGB888
-                ).copy()
+                # 2. RGBA Composite (SIMD cv2.cvtColor + alpha channel assignment)
+                if self.channel_mode == "Composite" or need_wipe_or_sbs:
+                    rgba = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2RGBA)
+                    rgba[:, :, 3] = a
+                    self._composite_frame = QImage(
+                        rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888
+                    ).copy()
+                else:
+                    self._composite_frame = self._current_frame
+
+                # 3. Cutout Foreground (SIMD bitwise mask)
+                if self.channel_mode == "Foreground" or need_wipe_or_sbs:
+                    fg = cv2.bitwise_and(rgb_frame, rgb_frame, mask=a)
+                    self._fg_frame = QImage(
+                        fg.data, w, h, w * 3, QImage.Format.Format_RGB888
+                    ).copy()
+                else:
+                    self._fg_frame = self._current_frame
             else:
                 self._alpha_frame = None
                 self._composite_frame = self._current_frame

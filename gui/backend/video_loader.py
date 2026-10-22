@@ -55,7 +55,7 @@ class VideoReader:
         self.cap: Optional[cv2.VideoCapture] = None
         self._last_index = -1
         self._frame_cache: Dict[int, np.ndarray] = {}  # index -> RGB frame
-        self._max_cache = 32
+        self._max_cache = 64
 
     def open(self) -> bool:
         if not self.clip.is_frame_dir:
@@ -68,16 +68,20 @@ class VideoReader:
             self.cap.release()
             self.cap = None
         self._frame_cache.clear()
+        self._last_index = -1
 
     def get_frame(self, index: int) -> Optional[np.ndarray]:
-        """Fetch frame at index as an RGB uint8 numpy array."""
+        """Fetch frame at index as an RGB uint8 numpy array with hardware streaming preference."""
         index = max(0, min(index, self.clip.total_frames - 1))
         
-        if index in self._frame_cache:
+        # Cache hit when random seeking (not sequential streaming)
+        if index in self._frame_cache and index != self._last_index + 1:
             return self._frame_cache[index]
 
         rgb = None
         if self.clip.is_frame_dir:
+            if index in self._frame_cache:
+                return self._frame_cache[index]
             if index < len(self.clip.frame_files):
                 fpath = self.clip.frame_files[index]
                 bgr = cv2.imread(fpath)
@@ -87,12 +91,15 @@ class VideoReader:
             if self.cap is None or not self.cap.isOpened():
                 self.open()
             if self.cap is not None and self.cap.isOpened():
+                # Avoid expensive keyframe seek when reading sequentially
                 if index != self._last_index + 1:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, index)
                 ret, bgr = self.cap.read()
                 if ret and bgr is not None:
                     self._last_index = index
                     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                elif index in self._frame_cache:
+                    return self._frame_cache[index]
 
         if rgb is not None:
             if len(self._frame_cache) >= self._max_cache:

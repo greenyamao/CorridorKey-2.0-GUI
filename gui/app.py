@@ -258,6 +258,7 @@ class MainWindow(QMainWindow):
 
         self.active_reader: Optional[VideoReader] = None
         self.current_clip: Optional[ClipInfo] = None
+        self._active_hint_mask: Optional[Any] = None
         self.render_queue: List[RenderTask] = []
         self.queue_items_map: Dict[str, Any] = {}
         self.active_runner: Optional[RenderRunner] = None
@@ -426,6 +427,7 @@ class MainWindow(QMainWindow):
         self.inspector.render_requested.connect(self._start_render)
         self.inspector.add_queue_requested.connect(self._add_to_queue)
         self.inspector.download_weights_requested.connect(self._open_weight_downloader)
+        self.inspector.hint_changed.connect(self._on_hint_changed)
         splitter.addWidget(self.inspector)
 
         splitter.setSizes([260, 760, 380])
@@ -651,28 +653,34 @@ class MainWindow(QMainWindow):
 
         frame_0 = self.active_reader.get_frame(0)
         
-        # Load companion hint mask if available
-        hint_mask = None
+        # Load companion hint mask once and cache in memory for zero-lag playback
+        self._active_hint_mask = None
         if clip.discovered_hint_path and os.path.exists(clip.discovered_hint_path):
             ext = Path(clip.discovered_hint_path).suffix.lower()
             if ext in {".png", ".jpg", ".jpeg", ".exr"}:
                 import cv2
-                hint_mask = cv2.imread(clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
+                self._active_hint_mask = cv2.imread(clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
 
-        self.viewport.set_frames(frame_0, alpha_matte=hint_mask, original_rgb=frame_0)
+        self.viewport.set_frames(frame_0, alpha_matte=self._active_hint_mask, original_rgb=frame_0)
         self.viewport.reset_view()
 
     def _on_timeline_frame_changed(self, frame_idx: int):
         if self.active_reader is not None:
             rgb = self.active_reader.get_frame(frame_idx)
             if rgb is not None:
-                hint_mask = None
-                if self.current_clip and self.current_clip.discovered_hint_path and os.path.exists(self.current_clip.discovered_hint_path):
-                    ext = Path(self.current_clip.discovered_hint_path).suffix.lower()
-                    if ext in {".png", ".jpg", ".jpeg", ".exr"}:
-                        import cv2
-                        hint_mask = cv2.imread(self.current_clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
-                self.viewport.set_frames(rgb, alpha_matte=hint_mask, original_rgb=rgb)
+                self.viewport.set_frames(rgb, alpha_matte=self._active_hint_mask, original_rgb=rgb)
+
+    def _on_hint_changed(self, hint_path: str):
+        self._active_hint_mask = None
+        if hint_path and os.path.exists(hint_path):
+            ext = Path(hint_path).suffix.lower()
+            if ext in {".png", ".jpg", ".jpeg", ".exr"}:
+                import cv2
+                self._active_hint_mask = cv2.imread(hint_path, cv2.IMREAD_GRAYSCALE)
+        if self.active_reader is not None:
+            rgb = self.active_reader.get_frame(self.timeline.current_frame)
+            if rgb is not None:
+                self.viewport.set_frames(rgb, alpha_matte=self._active_hint_mask, original_rgb=rgb)
 
     def _update_system_stats(self):
         gpu = get_gpu_info()

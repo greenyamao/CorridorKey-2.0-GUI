@@ -76,6 +76,7 @@ class InspectorPanel(QFrame):
     render_requested = Signal(RenderTask)
     add_queue_requested = Signal(RenderTask)
     download_weights_requested = Signal()
+    hint_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -731,11 +732,13 @@ class InspectorPanel(QFrame):
                 self.cmb_hint_frames.setCurrentIndex(1)
             else:
                 self.cmb_hint_frames.setCurrentIndex(0)
+            self.hint_changed.emit(fpath)
 
     def _on_clear_hint(self):
         self.hint_file_path = ""
         self.txt_hint_path.setText("None (Auto Segmentation)")
         self.txt_hint_path.setToolTip("Нейросеть автоматически сегментирует главный объект без подсказки.")
+        self.hint_changed.emit("")
 
     def _on_choose_temp_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Select Feature Cache Directory")
