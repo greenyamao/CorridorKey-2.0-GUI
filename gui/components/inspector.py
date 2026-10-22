@@ -408,13 +408,13 @@ class InspectorPanel(QFrame):
         self.btn_paint_mask.setProperty("class", "pill-btn")
         self.btn_paint_mask.setFixedHeight(22)
         tip_paint_mask = (
-            "<b>Paint First-Frame Mask (Рисование маски)</b><br>"
-            "Интерактивный инструмент для быстрого закрашивания силуэта объекта на первом кадре от руки.<br><br>"
-            "<b>Как рисовать:</b><br>"
-            "&bull; Закрасьте тело/силуэт персонажа крупными мазками полупрозрачной кисти.<br>"
-            "&bull; Не нужно вырисовывать отдельные волоски, пальцы или мелкие детали — нейросеть восстановит их сама!<br>"
-            "&bull; Старайтесь не выходить далеко за границы силуэта на фон.<br>"
-            "&bull; Степень доверия (Trust) будет автоматически выставлена на оптимальные 0.75."
+            "<b>Paint First-Frame Mask</b><br>"
+            "Interactive tool to paint a rough subject guidance mask on frame 1 by hand.<br><br>"
+            "<b>How to paint:</b><br>"
+            "&bull; Paint over the body/silhouette with broad brush strokes.<br>"
+            "&bull; No need to trace fine hair, fingers, or micro-details — the AI refiner reconstructs them automatically!<br>"
+            "&bull; Avoid painting outside the subject onto the background.<br>"
+            "&bull; Hint Trust will be automatically set to the optimal 0.75 for hand-painted masks."
         )
         self.btn_paint_mask.setToolTip(tip_paint_mask)
         self.btn_paint_mask.clicked.connect(self.paint_mask_requested.emit)
@@ -454,10 +454,10 @@ class InspectorPanel(QFrame):
         lbl_hm = QLabel("Hint Mode:")
         lbl_hm.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_hm = (
-            "<b>Hint Mode (Режим подсказки)</b><br>"
-            "&bull; <b>Auto (No Hint)</b> [По умолчанию]: автоматическая сегментация объекта нейросетью без масок.<br>"
-            "&bull; <b>First Frame (Hint)</b>: грубая подсказка на первом кадре (можно нарисовать от руки по кнопке 'Paint Mask...'). Нейросеть подхватит силуэт и проследит за ним по всему видео.<br>"
-            "&bull; <b>Video Matte</b>: покадровая видеомаска для всего клипа."
+            "<b>Hint Mode</b><br>"
+            "&bull; <b>Auto (No Hint)</b> [Default]: neural network automatically discovers and segments the primary subject without masks.<br>"
+            "&bull; <b>First Frame (Hint)</b>: rough mask on the first frame (click 'Paint Mask...' to sketch or browse a PNG). The model locks onto the subject and tracks it through time.<br>"
+            "&bull; <b>Video Matte</b>: frame-by-frame companion mask video for the entire clip."
         )
         lbl_hm.setToolTip(tip_hm)
         hm_box.addWidget(lbl_hm)

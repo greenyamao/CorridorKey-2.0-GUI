@@ -420,9 +420,9 @@ class MaskPainterDialog(QDialog):
         self.btn_brush.setCheckable(True)
         self.btn_brush.setChecked(True)
         tip_brush = (
-            "<b>Brush (Кисть) [B]</b><br>"
-            "Закрашивает силуэт объекта полупрозрачной подсветкой.<br>"
-            "<i>Совет: Закрашивайте тело крупными широкими мазками, не обращая внимания на волосы и пальцы.</i>"
+            "<b>Brush [B]</b><br>"
+            "Paints subject silhouette with semi-transparent cyan overlay.<br>"
+            "<i>Tip: Paint the body with broad strokes; fine hair and edges are extracted automatically.</i>"
         )
         self.btn_brush.setToolTip(tip_brush)
         self.btn_brush.clicked.connect(lambda: self._set_tool("brush"))
@@ -432,7 +432,7 @@ class MaskPainterDialog(QDialog):
         self.btn_eraser.setIcon(FI.DELETE.icon(Theme.DARK))
         self.btn_eraser.setIconSize(QSize(13, 13))
         self.btn_eraser.setCheckable(True)
-        tip_eraser = "<b>Eraser (Ластик) [E]</b><br>Стирает лишние мазки с фона."
+        tip_eraser = "<b>Eraser [E]</b><br>Erases unwanted strokes from the background."
         self.btn_eraser.setToolTip(tip_eraser)
         self.btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
         tb_layout.addWidget(self.btn_eraser)
@@ -442,7 +442,7 @@ class MaskPainterDialog(QDialog):
         # Brush Size Slider
         lbl_sz = QLabel("Size:")
         lbl_sz.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        tip_sz = "<b>Brush Size</b><br>Размер кисти в пикселях (горячие клавиши: <b>[</b> и <b>]</b>, либо <b>Ctrl + Колесико мыши</b>)."
+        tip_sz = "<b>Brush Size</b><br>Brush diameter in pixels (hotkeys: <b>[</b> and <b>]</b>, or <b>Ctrl + Mouse Wheel</b>)."
         lbl_sz.setToolTip(tip_sz)
         tb_layout.addWidget(lbl_sz)
 
@@ -465,7 +465,7 @@ class MaskPainterDialog(QDialog):
         # Opacity Slider
         lbl_op = QLabel("Opacity:")
         lbl_op.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        tip_op = "<b>Mask Opacity</b><br>Прозрачность слоя краски поверх кадра, чтобы отчетливо видеть границы персонажа."
+        tip_op = "<b>Mask Opacity</b><br>Transparency of the paint overlay over the frame to clearly see the underlying subject."
         lbl_op.setToolTip(tip_op)
         tb_layout.addWidget(lbl_op)
 
@@ -487,19 +487,19 @@ class MaskPainterDialog(QDialog):
 
         # Undo & Clear buttons
         btn_undo = QPushButton("Undo")
-        btn_undo.setToolTip("<b>Undo (Отмена) [Ctrl+Z]</b><br>Отменить последний штрих.")
+        btn_undo.setToolTip("<b>Undo [Ctrl+Z]</b><br>Revert the last stroke.")
         btn_undo.clicked.connect(lambda: self.canvas.undo())
         tb_layout.addWidget(btn_undo)
 
         btn_clear = QPushButton("Clear")
         btn_clear.setIcon(FI.CLEAR_SELECTION.icon(Theme.DARK))
         btn_clear.setIconSize(QSize(12, 12))
-        btn_clear.setToolTip("<b>Clear (Очистить)</b><br>Полностью стереть всю нарисованную маску.")
+        btn_clear.setToolTip("<b>Clear</b><br>Erase the entire mask.")
         btn_clear.clicked.connect(lambda: self.canvas.clear_mask())
         tb_layout.addWidget(btn_clear)
 
         btn_fit = QPushButton("Fit")
-        btn_fit.setToolTip("<b>Fit (Сброс зума) [F]</b><br>Масштабировать изображение по размеру окна.")
+        btn_fit.setToolTip("<b>Fit View [F]</b><br>Scale frame to fit the window.")
         btn_fit.clicked.connect(lambda: self.canvas.reset_view())
         tb_layout.addWidget(btn_fit)
 
@@ -527,9 +527,9 @@ class MaskPainterDialog(QDialog):
             }}
         """)
         tip_save = (
-            "<b>Save & Apply Mask (Сохранить и применить)</b><br>"
-            "Сохраняет маску как PNG-файл подсказки первого кадра и автоматически привязывает её к активному клипу.<br>"
-            "Параметр доверия <b>Hint Trust</b> будет выставлен в оптимальные 0.75."
+            "<b>Save & Apply Mask</b><br>"
+            "Saves the mask as a companion PNG file and attaches it to the active clip.<br>"
+            "Hint Trust will be automatically set to optimal 0.75."
         )
         btn_save.setToolTip(tip_save)
         btn_save.clicked.connect(self._on_save_mask)
