@@ -620,10 +620,10 @@ class InspectorPanel(QFrame):
         passes_grid2.addWidget(self.chk_out_fg)
 
         self.chk_out_checker = CheckBox("Checker (Preview)")
-        self.chk_out_checker.setChecked(False)
+        self.chk_out_checker.setChecked(True)
         self.chk_out_checker.setToolTip(
             "<b>Checker Preview Pass (MP4)</b><br>"
-            "Готовое превью-видео с шахматным фоном. Отключено по умолчанию, так как прозрачность видна прямо во вьюпорте."
+            "Готовое превью-видео с шахматным фоном. Открывается в стандартном плеере Windows для быстрой визуальной оценки кеинга."
         )
         passes_grid2.addWidget(self.chk_out_checker)
         layout.addLayout(passes_grid2)
@@ -634,18 +634,18 @@ class InspectorPanel(QFrame):
         lbl_fmt.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_fmt = (
             "<b>Output Format (Формат вывода)</b><br>"
-            "• <b>MP4 Video (10-bit x264)</b>: студийное x264 yuv444p10le без бандинга градиентов.<br>"
-            "• <b>MP4 Video (8-bit x264)</b>: стандартная совместимость yuv444p со всеми плеерами.<br>"
-            "• <b>EXR Sequence (16-bit Half)</b>: покадровая кино-секвенция для VFX.<br>"
-            "• <b>EXR Sequence (32-bit Float)</b>: полноразрядные float 32-bit кадры."
+            "• <b>MP4 Video (Universal - Windows Compatible)</b>: стандартный 8-bit H.264 yuv420p, открывается во всех стандартных плеерах Windows (Media Player, Кино и ТВ), браузерах и смартфонах.<br>"
+            "• <b>MP4 Video (Studio 10-bit - High 4:4:4)</b>: студийный профиль x264 без бандинга градиентов для монтажных программ (требует VLC, Premiere, DaVinci).<br>"
+            "• <b>EXR Sequence (16-bit Half)</b>: покадровая кино-секвенция для DaVinci Fusion / Nuke.<br>"
+            "• <b>EXR Sequence (32-bit Float)</b>: полноразрядные float 32-bit кадры для VFX."
         )
         lbl_fmt.setToolTip(tip_fmt)
         fmt_box.addWidget(lbl_fmt)
 
         self.cmb_format = ComboBox()
         self.cmb_format.addItems([
-            "MP4 Video (10-bit x264)",
-            "MP4 Video (8-bit x264)",
+            "MP4 Video (Universal - Windows Compatible)",
+            "MP4 Video (Studio 10-bit - High 4:4:4)",
             "EXR Sequence (16-bit Half)",
             "EXR Sequence (32-bit Float)",
         ])
@@ -880,19 +880,19 @@ class InspectorPanel(QFrame):
         fmt_idx = self.cmb_format.currentIndex()
         if fmt_idx == 0:
             out_fmt = "video"
-            pix_fmt = "yuv444p10le"
+            pix_fmt = "yuv420p"  # Universal standard playback in Windows Media Player & browsers
             exr_dtype = "half"
         elif fmt_idx == 1:
             out_fmt = "video"
-            pix_fmt = "yuv444p"
+            pix_fmt = "yuv444p10le"  # Studio 10-bit x264 without gradient banding
             exr_dtype = "half"
         elif fmt_idx == 2:
             out_fmt = "exr"
-            pix_fmt = "yuv444p10le"
+            pix_fmt = "yuv420p"
             exr_dtype = "half"
         else:
             out_fmt = "exr"
-            pix_fmt = "yuv444p10le"
+            pix_fmt = "yuv420p"
             exr_dtype = "float"
 
         preset_idx = self.cmb_hann_preset.currentIndex()

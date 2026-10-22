@@ -62,7 +62,7 @@ class RenderTask:
     ffmpeg_codec: str = "libx264"
     crf: int = 12
     preset: str = "medium"
-    pix_fmt: str = "yuv444p10le"
+    pix_fmt: str = "yuv420p"
     bitrate: Optional[str] = None
     ffmpeg_threads: int = 2
     stage2_batch: int = 1
