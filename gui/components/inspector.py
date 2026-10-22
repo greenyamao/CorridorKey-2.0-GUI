@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from PySide6.QtCore import Qt, Signal, QSize, QPoint, QEvent
+from PySide6.QtCore import Qt, Signal, QSize, QPoint, QEvent, QSettings
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -995,3 +995,106 @@ class InspectorPanel(QFrame):
         task = self.get_render_task()
         if task is not None:
             self.add_queue_requested.emit(task)
+
+    def save_settings(self, settings: QSettings):
+        settings.beginGroup("Inference")
+        settings.setValue("hann_preset", self.cmb_hann_preset.currentIndex())
+        settings.setValue("hann_chunk", self.spin_hann_chunk.value())
+        settings.setValue("hann_stride", self.spin_hann_stride.value())
+        settings.setValue("low_vram", self.chk_low_vram.isChecked())
+        settings.setValue("model_scale", self.cmb_model_scale.currentIndex())
+        settings.endGroup()
+
+        settings.beginGroup("AlphaHint")
+        settings.setValue("hint_frames", self.cmb_hint_frames.currentIndex())
+        settings.setValue("hint_quality", self.slider_hint_quality.value())
+        settings.setValue("carry_hint", self.chk_carry_hint.isChecked())
+        settings.endGroup()
+
+        settings.beginGroup("Despill")
+        settings.setValue("despill_color", self.cmb_despill_color.currentIndex())
+        settings.setValue("despill_strength", self.slider_despill.value())
+        settings.setValue("brightness", self.spin_brightness.value())
+        settings.setValue("contrast", self.spin_contrast.value())
+        settings.setValue("cutout_linear", self.chk_cutout_linear.isChecked())
+        settings.setValue("frame_dir_linear", self.chk_frame_dir_linear.isChecked())
+        settings.endGroup()
+
+        settings.beginGroup("Deliver")
+        settings.setValue("out_cutout", self.chk_out_cutout.isChecked())
+        settings.setValue("out_alpha", self.chk_out_alpha.isChecked())
+        settings.setValue("out_fg", self.chk_out_fg.isChecked())
+        settings.setValue("out_checker", self.chk_out_checker.isChecked())
+        settings.setValue("format", self.cmb_format.currentIndex())
+        settings.setValue("output_dir", self.output_dir)
+        settings.setValue("sound_on_finish", self.chk_sound_on_finish.isChecked())
+        settings.setValue("versioned_sets", self.chk_versioned_sets.isChecked())
+        settings.setValue("limit_frames", self.chk_limit_frames.isChecked())
+        settings.setValue("num_frames", self.spin_num_frames.value())
+        settings.endGroup()
+
+    def load_settings(self, settings: QSettings):
+        settings.beginGroup("Inference")
+        if settings.contains("hann_preset"):
+            self.cmb_hann_preset.setCurrentIndex(int(settings.value("hann_preset", 0)))
+        if settings.contains("hann_chunk"):
+            self.spin_hann_chunk.setValue(int(settings.value("hann_chunk", 48)))
+        if settings.contains("hann_stride"):
+            self.spin_hann_stride.setValue(int(settings.value("hann_stride", 24)))
+        if settings.contains("low_vram"):
+            self.chk_low_vram.setChecked(settings.value("low_vram", False, type=bool))
+        if settings.contains("model_scale"):
+            self.cmb_model_scale.setCurrentIndex(int(settings.value("model_scale", 0)))
+        settings.endGroup()
+
+        settings.beginGroup("AlphaHint")
+        if settings.contains("hint_frames"):
+            self.cmb_hint_frames.setCurrentIndex(int(settings.value("hint_frames", 0)))
+        if settings.contains("hint_quality"):
+            self.slider_hint_quality.setValue(int(settings.value("hint_quality", 95)))
+        if settings.contains("carry_hint"):
+            self.chk_carry_hint.setChecked(settings.value("carry_hint", True, type=bool))
+        settings.endGroup()
+
+        settings.beginGroup("Despill")
+        if settings.contains("despill_color"):
+            self.cmb_despill_color.setCurrentIndex(int(settings.value("despill_color", 0)))
+        if settings.contains("despill_strength"):
+            self.slider_despill.setValue(int(settings.value("despill_strength", 50)))
+        if settings.contains("brightness"):
+            self.spin_brightness.setValue(float(settings.value("brightness", 1.0)))
+        if settings.contains("contrast"):
+            self.spin_contrast.setValue(float(settings.value("contrast", 1.0)))
+        if settings.contains("cutout_linear"):
+            self.chk_cutout_linear.setChecked(settings.value("cutout_linear", False, type=bool))
+        if settings.contains("frame_dir_linear"):
+            self.chk_frame_dir_linear.setChecked(settings.value("frame_dir_linear", False, type=bool))
+        settings.endGroup()
+
+        settings.beginGroup("Deliver")
+        if settings.contains("out_cutout"):
+            self.chk_out_cutout.setChecked(settings.value("out_cutout", True, type=bool))
+        if settings.contains("out_alpha"):
+            self.chk_out_alpha.setChecked(settings.value("out_alpha", False, type=bool))
+        if settings.contains("out_fg"):
+            self.chk_out_fg.setChecked(settings.value("out_fg", False, type=bool))
+        if settings.contains("out_checker"):
+            self.chk_out_checker.setChecked(settings.value("out_checker", False, type=bool))
+        if settings.contains("format"):
+            self.cmb_format.setCurrentIndex(int(settings.value("format", 0)))
+        if settings.contains("output_dir"):
+            saved_dir = str(settings.value("output_dir"))
+            if saved_dir and os.path.isdir(saved_dir):
+                self.output_dir = saved_dir
+                self.txt_out_dir.setText(saved_dir)
+                self.txt_out_dir.setToolTip(saved_dir)
+        if settings.contains("sound_on_finish"):
+            self.chk_sound_on_finish.setChecked(settings.value("sound_on_finish", True, type=bool))
+        if settings.contains("versioned_sets"):
+            self.chk_versioned_sets.setChecked(settings.value("versioned_sets", False, type=bool))
+        if settings.contains("limit_frames"):
+            self.chk_limit_frames.setChecked(settings.value("limit_frames", False, type=bool))
+        if settings.contains("num_frames"):
+            self.spin_num_frames.setValue(int(settings.value("num_frames", 60)))
+        settings.endGroup()
+        self._recalc_vram()

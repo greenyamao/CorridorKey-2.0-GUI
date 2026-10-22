@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QSize
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QSize, QSettings
 from PySide6.QtGui import QIcon, QFont, QColor, QCursor, QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -264,6 +264,7 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
         self._setup_shortcuts()
+        self._load_settings()
 
         # Telemetry timer (update GPU/VRAM and disk stats every 1 second)
         self.sys_timer = QTimer(self)
@@ -292,15 +293,15 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(6)
 
         # Main 3-Column Splitter (Left: Media, Center: Viewport, Right: Inspector)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {BG_CANVAS}; }}")
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {BG_CANVAS}; }}")
 
         # 1. Left Column: Unified Media & Batch Panel
         self.media_panel = MediaPanel()
         self.media_panel.clip_selected.connect(self._on_clip_selected)
         self.media_panel.render_all_requested.connect(self._on_render_all_clips)
         self.media_panel.stop_batch_requested.connect(self._on_stop_batch)
-        splitter.addWidget(self.media_panel)
+        self.splitter.addWidget(self.media_panel)
 
         # 2. Center Column: Viewport & Timeline
         center_card = QFrame()
@@ -417,7 +418,7 @@ class MainWindow(QMainWindow):
         self.timeline.frame_changed.connect(self._on_timeline_frame_changed)
         c_layout.addWidget(self.timeline)
 
-        splitter.addWidget(center_card)
+        self.splitter.addWidget(center_card)
 
         # 3. Right Column: Inspector Panel
         self.inspector = InspectorPanel()
@@ -425,10 +426,10 @@ class MainWindow(QMainWindow):
         self.inspector.download_weights_requested.connect(self._open_weight_downloader)
         self.inspector.hint_changed.connect(self._on_hint_changed)
         self.inspector.despill_changed.connect(self._on_despill_changed)
-        splitter.addWidget(self.inspector)
+        self.splitter.addWidget(self.inspector)
 
-        splitter.setSizes([260, 760, 380])
-        main_layout.addWidget(splitter, stretch=1)
+        self.splitter.setSizes([260, 760, 380])
+        main_layout.addWidget(self.splitter, stretch=1)
 
         # Native Minimal Status Bar
         self.status_bar = QStatusBar(self)
@@ -953,16 +954,45 @@ class MainWindow(QMainWindow):
         else:
             self.media_panel.set_batch_running(False)
 
+    def _save_settings(self):
+        settings = QSettings("CorridorKey", "Workbench")
+        settings.setValue("geometry", self.saveGeometry())
+        settings.setValue("window_state", self.saveState())
+        if hasattr(self, "splitter"):
+            settings.setValue("splitter_state", self.splitter.saveState())
+        if hasattr(self, "cmb_mode"):
+            settings.setValue("viewport_mode", self.cmb_mode.currentIndex())
+        if hasattr(self, "cmb_channel"):
+            settings.setValue("viewport_channel", self.cmb_channel.currentIndex())
+        if hasattr(self, "inspector"):
+            self.inspector.save_settings(settings)
+
+    def _load_settings(self):
+        settings = QSettings("CorridorKey", "Workbench")
+        geom = settings.value("geometry")
+        if geom:
+            self.restoreGeometry(geom)
+        state = settings.value("window_state")
+        if state:
+            self.restoreState(state)
+        splitter_state = settings.value("splitter_state")
+        if splitter_state and hasattr(self, "splitter"):
+            self.splitter.restoreState(splitter_state)
+        if hasattr(self, "cmb_mode") and settings.contains("viewport_mode"):
+            self.cmb_mode.setCurrentIndex(int(settings.value("viewport_mode", 0)))
+        if hasattr(self, "cmb_channel") and settings.contains("viewport_channel"):
+            self.cmb_channel.setCurrentIndex(int(settings.value("viewport_channel", 0)))
+        if hasattr(self, "inspector"):
+            self.inspector.load_settings(settings)
+
     def closeEvent(self, event):
+        self._save_settings()
         if self.active_runner is not None and self.active_runner.isRunning():
             self.active_runner.cancel()
             self.active_runner.wait(1000)
         if self.active_reader is not None:
             self.active_reader.close()
-        if self.rendered_alpha_reader is not None:
-            self.rendered_alpha_reader.close()
-        if self.rendered_fg_reader is not None:
-            self.rendered_fg_reader.close()
+        self._release_rendered_readers()
         event.accept()
 
     # Drag and Drop support
