@@ -603,7 +603,7 @@ class InspectorPanel(QFrame):
         passes_grid.addWidget(self.chk_out_cutout)
 
         self.chk_out_alpha = CheckBox("Alpha (Matte)")
-        self.chk_out_alpha.setChecked(True)
+        self.chk_out_alpha.setChecked(False)
         self.chk_out_alpha.setToolTip(
             "<b>Alpha Matte Pass (MP4)</b><br>"
             "Black & white silhouette matte (white is subject, black is background) for compositing and live viewport preview."
@@ -621,7 +621,7 @@ class InspectorPanel(QFrame):
         passes_grid2.addWidget(self.chk_out_fg)
 
         self.chk_out_checker = CheckBox("Checker (Preview)")
-        self.chk_out_checker.setChecked(True)
+        self.chk_out_checker.setChecked(False)
         self.chk_out_checker.setToolTip(
             "<b>Checker Preview Pass (MP4)</b><br>"
             "Universal preview video composited over transparency checkerboard. Plays directly in Windows Media Player."
@@ -724,7 +724,7 @@ class InspectorPanel(QFrame):
         layout.addWidget(self.chk_sound_on_finish)
 
         self.chk_versioned_sets = CheckBox("Versioned output sets (set_01, set_02...)")
-        self.chk_versioned_sets.setChecked(True)
+        self.chk_versioned_sets.setChecked(False)
         self.chk_versioned_sets.setToolTip("<b>Versioned Sets</b><br>When enabled, every new render is saved into a new subfolder (set_01, set_02...). When disabled, renders save directly to the clip directory, overwriting previous files.")
         layout.addWidget(self.chk_versioned_sets)
 

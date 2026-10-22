@@ -68,6 +68,8 @@ class VideoReader:
             self.cap.release()
             self.cap = None
         self._frame_cache.clear()
+        if hasattr(self, "_rgba_cache"):
+            self._rgba_cache.clear()
         self._last_index = -1
 
     def get_frame(self, index: int) -> Optional[np.ndarray]:
@@ -108,6 +110,51 @@ class VideoReader:
             self._frame_cache[index] = rgb
 
         return rgb
+
+    def get_rgba_frame(self, index: int) -> Optional[np.ndarray]:
+        """Fetch frame as RGBA uint8 array, decoding embedded alpha channel from video containers (e.g. ProRes 4444)."""
+        index = max(0, min(index, self.clip.total_frames - 1))
+        if hasattr(self, "_rgba_cache") and index in self._rgba_cache:
+            return self._rgba_cache[index]
+
+        if not hasattr(self, "_rgba_cache"):
+            self._rgba_cache: Dict[int, np.ndarray] = {}
+
+        # Decode directly using FFmpeg pipe with precise timestamp seek
+        try:
+            import subprocess
+            seek_sec = index / max(1.0, self.clip.fps)
+            cmd = [
+                "ffmpeg",
+                "-ss", f"{seek_sec:.4f}",
+                "-i", self.clip.path,
+                "-vframes", "1",
+                "-f", "rawvideo",
+                "-pix_fmt", "rgba",
+                "-",
+            ]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            out, _ = proc.communicate()
+            expected = self.clip.width * self.clip.height * 4
+            if len(out) >= expected:
+                arr = np.frombuffer(out[:expected], dtype=np.uint8).reshape((self.clip.height, self.clip.width, 4))
+                if len(self._rgba_cache) >= self._max_cache:
+                    oldest = next(iter(self._rgba_cache))
+                    del self._rgba_cache[oldest]
+                self._rgba_cache[index] = arr
+                return arr
+        except Exception:
+            pass
+
+        # Fallback to get_frame + opaque alpha
+        rgb = self.get_frame(index)
+        if rgb is not None:
+            h, w, _ = rgb.shape
+            rgba = np.zeros((h, w, 4), dtype=np.uint8)
+            rgba[:, :, :3] = rgb
+            rgba[:, :, 3] = 255
+            return rgba
+        return None
 
 
 def find_alpha_hint(input_path: Path) -> Optional[Path]:

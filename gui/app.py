@@ -682,14 +682,15 @@ class MainWindow(QMainWindow):
         for d in possible_dirs:
             if not d.is_dir():
                 continue
+            cutout_candidates = list(d.glob(f"{stem}_cutout.*")) or list(d.glob("*_cutout.*"))
             alpha_candidates = list(d.glob(f"{stem}_alpha.*")) or list(d.glob("*_alpha.*"))
-            if alpha_candidates:
-                found_alpha = alpha_candidates[0]
+            checker_candidates = list(d.glob(f"{stem}_checker*.*")) or list(d.glob("*_checker*.*"))
+            fg_candidates = list(d.glob(f"{stem}_fg.*")) or list(d.glob("*_fg.*"))
+
+            if cutout_candidates or alpha_candidates or checker_candidates or fg_candidates:
                 target_dir = d
-                # Prioritize processed despilled cutout (ProRes 4444), then checker comp, then fg
-                cutout_candidates = list(d.glob(f"{stem}_cutout.*")) or list(d.glob("*_cutout.*"))
-                checker_candidates = list(d.glob(f"{stem}_checker*.*")) or list(d.glob("*_checker*.*"))
-                fg_candidates = list(d.glob(f"{stem}_fg.*")) or list(d.glob("*_fg.*"))
+                if alpha_candidates:
+                    found_alpha = alpha_candidates[0]
                 if cutout_candidates:
                     found_fg = cutout_candidates[0]
                 elif checker_candidates:
@@ -698,18 +699,22 @@ class MainWindow(QMainWindow):
                     found_fg = fg_candidates[0]
                 break
 
+        loaded_any = False
         if found_alpha and found_alpha.is_file():
             if self.rendered_alpha_reader is not None:
                 self.rendered_alpha_reader.close()
             self.rendered_alpha_reader = VideoReader(probe_clip(str(found_alpha)))
             self.rendered_alpha_reader.open()
+            loaded_any = True
 
-            if found_fg and found_fg.is_file():
-                if self.rendered_fg_reader is not None:
-                    self.rendered_fg_reader.close()
-                self.rendered_fg_reader = VideoReader(probe_clip(str(found_fg)))
-                self.rendered_fg_reader.open()
+        if found_fg and found_fg.is_file():
+            if self.rendered_fg_reader is not None:
+                self.rendered_fg_reader.close()
+            self.rendered_fg_reader = VideoReader(probe_clip(str(found_fg)))
+            self.rendered_fg_reader.open()
+            loaded_any = True
 
+        if loaded_any:
             self._last_rendered_out_dir = str(target_dir) if target_dir else ""
             self.media_panel.set_clip_status(clip.path, "Done")
             return True
@@ -725,18 +730,26 @@ class MainWindow(QMainWindow):
             return
 
         alpha_matte = None
-        if self.rendered_alpha_reader is not None:
+        fg_rgb = orig_rgb
+
+        # If we have a rendered foreground reader (such as cutout.mov):
+        if self.rendered_fg_reader is not None:
+            if self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
+                rgba = self.rendered_fg_reader.get_rgba_frame(frame_idx)
+                if rgba is not None:
+                    fg_rgb = rgba[:, :, :3]
+                    alpha_matte = rgba[:, :, 3]
+            else:
+                f_frame = self.rendered_fg_reader.get_frame(frame_idx)
+                if f_frame is not None:
+                    fg_rgb = f_frame
+
+        if alpha_matte is None and self.rendered_alpha_reader is not None:
             a_frame = self.rendered_alpha_reader.get_frame(frame_idx)
             if a_frame is not None:
                 alpha_matte = a_frame[:, :, 0] if a_frame.ndim == 3 else a_frame
-        elif self._active_hint_mask is not None:
+        elif alpha_matte is None and self._active_hint_mask is not None:
             alpha_matte = self._active_hint_mask
-
-        fg_rgb = orig_rgb
-        if self.rendered_fg_reader is not None:
-            f_frame = self.rendered_fg_reader.get_frame(frame_idx)
-            if f_frame is not None:
-                fg_rgb = f_frame
 
         self.viewport.set_frames(rgb_frame=fg_rgb, alpha_matte=alpha_matte, original_rgb=orig_rgb)
 
