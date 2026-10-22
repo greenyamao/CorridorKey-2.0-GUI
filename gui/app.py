@@ -800,7 +800,7 @@ class MainWindow(QMainWindow):
         self._display_current_frame()
 
     def _open_mask_painter(self):
-        if not self.active_clip or not self.active_reader:
+        if not self.current_clip or not self.active_reader:
             QMessageBox.information(
                 self,
                 "No Clip Loaded",
@@ -821,7 +821,7 @@ class MainWindow(QMainWindow):
 
         dlg = MaskPainterDialog(
             frame_rgb=frame_0,
-            clip_path=self.active_clip.path,
+            clip_path=self.current_clip.path,
             initial_mask_path=self.inspector.hint_file_path or None,
             parent=self,
         )
@@ -829,9 +829,9 @@ class MainWindow(QMainWindow):
             saved_path = dlg.saved_mask_path
             if saved_path:
                 self.inspector.set_painted_mask(saved_path)
-                self.active_clip.discovered_hint_path = saved_path
-                self.active_clip.discovered_hint_mode = "first_frame"
-                self.media_panel.update_clip_hint(self.active_clip.path, saved_path)
+                self.current_clip.discovered_hint_path = saved_path
+                self.current_clip.discovered_hint_mode = "first_frame"
+                self.media_panel.update_clip_hint(self.current_clip.path, saved_path)
                 self._on_hint_changed(saved_path)
 
     def _on_hint_changed(self, hint_path: str):
