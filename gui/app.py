@@ -258,6 +258,9 @@ class MainWindow(QMainWindow):
         self.rendered_fg_reader: Optional[VideoReader] = None
         self._last_rendered_out_dir: str = ""
         self._current_rendering_path: str = ""
+        self._current_task_output_dir: str = ""
+        self.session_rendered_clips: set[str] = set()
+        self.session_clip_output_dirs: Dict[str, str] = {}
 
         self._init_ui()
         self._setup_shortcuts()
@@ -640,19 +643,32 @@ class MainWindow(QMainWindow):
         channels = ["Composite", "Alpha", "Foreground", "Original"]
         self.viewport.set_channel_mode(channels[idx])
 
-    def _check_and_load_rendered_outputs(self, clip: Optional[ClipInfo]) -> bool:
+    def _check_and_load_rendered_outputs(self, clip: Optional[ClipInfo], specific_dir: Optional[str] = None) -> bool:
         """Checks if rendered alpha/foreground videos exist for this clip, and loads them for live preview."""
         if clip is None:
             return False
 
         stem = Path(clip.path).stem
         base_out = Path(self.inspector.output_dir)
-        possible_dirs = [
+
+        possible_dirs: List[Path] = []
+        if specific_dir and os.path.isdir(specific_dir):
+            possible_dirs.append(Path(specific_dir))
+
+        # Check structured set_XX subdirectories (sorted latest first)
+        clip_base = base_out / stem
+        if clip_base.is_dir():
+            set_dirs = sorted([d for d in clip_base.iterdir() if d.is_dir() and d.name.startswith("set_")], reverse=True)
+            possible_dirs.extend(set_dirs)
+            possible_dirs.append(clip_base)
+
+        # Legacy directories fallback
+        possible_dirs.extend([
             base_out / f"out_{stem}",
             base_out,
             Path.home() / "Videos" / "CorridorKey_Renders" / f"out_{stem}",
             Path.home() / "Videos" / "CorridorKey_Renders",
-        ]
+        ])
 
         found_alpha: Optional[Path] = None
         found_fg: Optional[Path] = None
@@ -738,8 +754,12 @@ class MainWindow(QMainWindow):
                 import cv2
                 self._active_hint_mask = cv2.imread(clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
 
-        # Check if already rendered previously
-        self._check_and_load_rendered_outputs(clip)
+        # Only load rendered outputs if this clip was actually rendered during this session!
+        if clip.path in self.session_rendered_clips:
+            specific_dir = self.session_clip_output_dirs.get(clip.path)
+            self._check_and_load_rendered_outputs(clip, specific_dir=specific_dir)
+        else:
+            self.media_panel.set_clip_status(clip.path, "Ready")
 
         self._display_current_frame()
         self.viewport.reset_view()
@@ -820,6 +840,7 @@ class MainWindow(QMainWindow):
 
     def _start_render(self, task: RenderTask):
         self._current_rendering_path = task.clip_path
+        self._current_task_output_dir = task.output_dir
         self.media_panel.set_clip_status(task.clip_path, "Rendering", 0.0)
         self.lbl_status.setText(f"Rendering: {task.clip_name}")
         self.lbl_status.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 11px; font-weight: 600;")
@@ -842,18 +863,23 @@ class MainWindow(QMainWindow):
         if clip_path:
             self.media_panel.set_clip_status(clip_path, "Done" if success else "Error")
 
+        task_out = getattr(self, '_current_task_output_dir', "") or getattr(self, '_last_rendered_out_dir', "")
+        if not task_out and clip_path:
+            task_out = str(Path(self.inspector.output_dir) / Path(clip_path).stem)
+
         if success:
             clip_name = Path(clip_path).name if clip_path else "Task"
+            if clip_path:
+                self.session_rendered_clips.add(clip_path)
+                self.session_clip_output_dirs[clip_path] = task_out
+
             self.lbl_status.setText(f"Done: {clip_name}")
             self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
 
             # Automatically bind rendered output and update the Viewport with transparent background!
-            self._check_and_load_rendered_outputs(self.current_clip)
-            self._display_current_frame()
-
-            task_out = getattr(self, '_last_rendered_out_dir', "")
-            if not task_out and clip_path:
-                task_out = str(Path(self.inspector.output_dir) / f"out_{Path(clip_path).stem}")
+            if self.current_clip and self.current_clip.path == clip_path:
+                self._check_and_load_rendered_outputs(self.current_clip, specific_dir=task_out)
+                self._display_current_frame()
 
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Rendering Complete")

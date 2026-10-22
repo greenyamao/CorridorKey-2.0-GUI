@@ -595,24 +595,36 @@ class InspectorPanel(QFrame):
         passes_grid = QHBoxLayout()
         self.chk_out_cutout = CheckBox("Cutout (RGBA)")
         self.chk_out_cutout.setChecked(True)
-        self.chk_out_cutout.setToolTip("<b>Cutout Pass</b><br>Вырезанный клип с прозрачным фоном и despill.")
+        self.chk_out_cutout.setToolTip(
+            "<b>Cutout Pass (ProRes 4444 MOV)</b><br>"
+            "Главный чистовой файл для видеомонтажа: видео со встроенным прозрачным альфа-каналом и despill."
+        )
         passes_grid.addWidget(self.chk_out_cutout)
 
         self.chk_out_alpha = CheckBox("Alpha (Matte)")
         self.chk_out_alpha.setChecked(True)
-        self.chk_out_alpha.setToolTip("<b>Alpha Matte Pass</b><br>Черно-белая маска прозрачности (белый — объект, черный — фон).")
+        self.chk_out_alpha.setToolTip(
+            "<b>Alpha Matte Pass (MP4)</b><br>"
+            "Черно-белая маска силуэта (белый — объект, черный — фон). Нужна для кеинга и предпросмотра во вьюпорте."
+        )
         passes_grid.addWidget(self.chk_out_alpha)
         layout.addLayout(passes_grid)
 
         passes_grid2 = QHBoxLayout()
         self.chk_out_fg = CheckBox("FG (Foreground)")
-        self.chk_out_fg.setChecked(True)
-        self.chk_out_fg.setToolTip("<b>Foreground Pass</b><br>RGB изображение переднего плана с очищенным фоном.")
+        self.chk_out_fg.setChecked(False)
+        self.chk_out_fg.setToolTip(
+            "<b>Foreground Pass (RGB)</b><br>"
+            "RGB изображение переднего плана без альфа-канала (с despill). Отключено по умолчанию для экономии места."
+        )
         passes_grid2.addWidget(self.chk_out_fg)
 
         self.chk_out_checker = CheckBox("Checker (Preview)")
-        self.chk_out_checker.setChecked(True)
-        self.chk_out_checker.setToolTip("<b>Checker Preview Pass</b><br>Композит на шахматной сетке для быстрой визуальной проверки краев.")
+        self.chk_out_checker.setChecked(False)
+        self.chk_out_checker.setToolTip(
+            "<b>Checker Preview Pass (MP4)</b><br>"
+            "Готовое превью-видео с шахматным фоном. Отключено по умолчанию, так как прозрачность видна прямо во вьюпорте."
+        )
         passes_grid2.addWidget(self.chk_out_checker)
         layout.addLayout(passes_grid2)
 
@@ -834,9 +846,14 @@ class InspectorPanel(QFrame):
         target = self.output_dir
         if self.current_clip:
             stem = Path(self.current_clip.path).stem
-            clip_sub = Path(self.output_dir) / f"out_{stem}"
-            if clip_sub.is_dir():
-                target = str(clip_sub)
+            clip_base = Path(self.output_dir) / stem
+            if clip_base.is_dir():
+                set_dirs = sorted([d for d in clip_base.iterdir() if d.is_dir() and d.name.startswith("set_")], reverse=True)
+                target = str(set_dirs[0]) if set_dirs else str(clip_base)
+            else:
+                clip_sub = Path(self.output_dir) / f"out_{stem}"
+                if clip_sub.is_dir():
+                    target = str(clip_sub)
         if os.path.exists(target):
             try:
                 os.startfile(target)
@@ -858,7 +875,7 @@ class InspectorPanel(QFrame):
         if self.chk_out_checker.isChecked():
             outputs.append("checker")
         if not outputs:
-            outputs = ["cutout", "alpha", "fg", "checker"]
+            outputs = ["cutout", "alpha"]
 
         fmt_idx = self.cmb_format.currentIndex()
         if fmt_idx == 0:
@@ -895,7 +912,19 @@ class InspectorPanel(QFrame):
 
         import uuid
         task_id = str(uuid.uuid4())[:8]
-        clip_out_dir = os.path.join(self.output_dir, f"out_{Path(target_clip.name).stem}")
+        stem = Path(target_clip.name).stem
+        clip_base_dir = os.path.join(self.output_dir, stem)
+        os.makedirs(clip_base_dir, exist_ok=True)
+
+        # Isolated auto-incrementing set subdirectories (set_01, set_02...)
+        set_idx = 1
+        while True:
+            candidate = os.path.join(clip_base_dir, f"set_{set_idx:02d}")
+            if not os.path.exists(candidate) or not os.listdir(candidate):
+                clip_out_dir = candidate
+                break
+            set_idx += 1
+        os.makedirs(clip_out_dir, exist_ok=True)
 
         use_hint = bool(self.hint_file_path)
 
