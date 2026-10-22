@@ -19,3 +19,27 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-----------------------------------------------------------------------
+THIRD-PARTY AND UPSTREAM ENGINE NOTICES
+-----------------------------------------------------------------------
+
+This repository contains only the independent GUI desktop application.
+The underlying AI engine (CorridorKey 2.0) and model weights are not
+distributed within this repository; they are downloaded on-demand by the
+launcher or end-user and are governed by their original licenses:
+
+* CorridorKey 2.0 Engine:
+  Copyright (c) Corridor Digital LLC.
+  Licensed under CC BY-NC-SA 4.0 with Additional Terms.
+  https://github.com/nikopueringer/CorridorKey2.0
+  https://github.com/nikopueringer/CorridorKey2.0/blob/master/LICENSE
+
+* C-RADIOv4 Foundation Model:
+  Copyright (c) NVIDIA Corporation.
+
+* MoGe-2 Normal/Geometry Model:
+  Copyright (c) Ruicheng Wang et al.
+
+* Robust Video Matting (RVM):
+  Copyright (c) Shanchuan Lin et al. (GPL-3.0)

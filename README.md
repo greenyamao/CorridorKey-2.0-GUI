@@ -40,6 +40,17 @@ python run_gui.py
 * NVIDIA graphics card with at least 8 GB VRAM
 * Python 3.10, 3.11, or 3.12 installed with PATH enabled
 
+## Acknowledgements & Core Engine
+
+This GUI application is an independent frontend interface built to run alongside the core **[CorridorKey 2.0](https://github.com/nikopueringer/CorridorKey2.0)** engine created by Niko Pueringer, Zachary Harris, and Corridor Digital LLC.
+
+* **CorridorKey 2.0 Engine:** [https://github.com/nikopueringer/CorridorKey2.0](https://github.com/nikopueringer/CorridorKey2.0)
+* **Official Project & Plugin:** [https://corridorkey.com](https://corridorkey.com)
+* **Model Weights (Hugging Face):** [https://huggingface.co/nikopueringer/corridorkey](https://huggingface.co/nikopueringer/corridorkey)
+
 ## License
 
-This GUI application is licensed under the MIT License.
+* **GUI Code:** Licensed under the [MIT License](LICENSE).
+* **Core Engine & Model Weights:** The underlying CorridorKey 2.0 engine (automatically downloaded to `./engine/`) and its model weights are licensed under the **[CorridorKey License (CC BY-NC-SA 4.0 with Additional Terms)](https://github.com/nikopueringer/CorridorKey2.0/blob/master/LICENSE)** by Corridor Digital LLC.
+  * **Video Output:** The images and videos you produce with this tool are 100% yours and can be used for any personal or commercial project.
+  * **Usage Restrictions:** You may not repackage, redistribute, or sell the CorridorKey engine or weights as a paid product, nor offer paid inference APIs using CorridorKey without a separate commercial agreement from Corridor Digital LLC.
