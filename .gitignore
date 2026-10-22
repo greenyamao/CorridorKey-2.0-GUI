@@ -1,0 +1,45 @@
+# CorridorKey Workbench GUI .gitignore
+
+# Engine layer (upstream CorridorKey 2.0 repository managed dynamically)
+engine/
+
+# Weights layer (~5 GB model assets)
+weights/
+vfms/
+*.safetensors
+*.pt
+*.npz
+*.bin
+*.lock
+*.part
+*.incomplete
+
+# FFmpeg portable binary layer
+bin/
+ffmpeg.exe
+ffprobe.exe
+
+# Output renders & temporary caches
+renders/
+output/
+temp/
+*.log
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI Instructions & Agent logs
+agents.md
+AGENTS.md

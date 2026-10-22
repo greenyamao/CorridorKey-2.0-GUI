@@ -1,0 +1,857 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+    QDoubleSpinBox,
+    QLineEdit,
+    QFileDialog,
+    QScrollArea,
+    QFrame,
+)
+from PySide6.QtGui import QFont, QCursor, QColor
+from qfluentwidgets import (
+    FluentIcon as FI,
+    Theme,
+    CheckBox,
+    Slider,
+    ComboBox,
+)
+
+from gui.backend.video_loader import ClipInfo
+from gui.backend.system_monitor import calculate_clip_vram_estimate, get_gpu_info, get_disk_free_gb
+from gui.backend.render_worker import RenderTask
+from gui.styles.theme import (
+    ACCENT_BLUE,
+    CORRIDOR_YELLOW,
+    CORRIDOR_GREEN,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+    TEXT_MUTED,
+)
+
+
+def create_section_header(title: str, tooltip: str = "") -> QWidget:
+    """Helper to create a flat studio section header with an accent pip."""
+    w = QWidget()
+    w.setStyleSheet("background: transparent; border: none;")
+    hl = QHBoxLayout(w)
+    hl.setContentsMargins(0, 2, 0, 0)
+    hl.setSpacing(6)
+
+    pip = QFrame()
+    pip.setFixedSize(3, 11)
+    pip.setStyleSheet(f"background-color: {ACCENT_BLUE}; border-radius: 1px;")
+    hl.addWidget(pip)
+
+    lbl = QLabel(title.upper())
+    lbl.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;")
+    if tooltip:
+        lbl.setToolTip(tooltip)
+        w.setToolTip(tooltip)
+    hl.addWidget(lbl, stretch=1)
+    return w
+
+
+def create_separator() -> QFrame:
+    """Subtle flat separator line between sections."""
+    sep = QFrame()
+    sep.setFixedHeight(1)
+    sep.setStyleSheet("background-color: #222228; border: none;")
+    return sep
+
+
+class InspectorPanel(QFrame):
+    """Clean, flat Windows 11 Workbench Inspector Panel in English with comprehensive Russian hover tooltips."""
+
+    render_requested = Signal(RenderTask)
+    add_queue_requested = Signal(RenderTask)
+    download_weights_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("inspectorPanel")
+        self.setMinimumWidth(320)
+        self.setStyleSheet("""
+            QFrame#inspectorPanel {
+                background-color: #16161A;
+                border: 1px solid #28282E;
+                border-radius: 8px;
+            }
+        """)
+
+        self.current_clip: Optional[ClipInfo] = None
+        self.output_dir: str = str(Path.home() / "Videos" / "CorridorKey_Renders")
+        self.custom_weights_path: str = ""
+        self.custom_temp_dir: str = ""
+        self.hint_file_path: str = ""
+
+        # Outer layout
+        panel_layout = QVBoxLayout(self)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(0)
+
+        # Scroll area
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet("border: none; background: transparent;")
+        panel_layout.addWidget(self.scroll)
+
+        self.container = QWidget(self.scroll)
+        self.scroll.setWidget(self.container)
+
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        # 0. Missing Weights Alert (Clean single-layer notification banner)
+        self.weights_card = QFrame()
+        self.weights_card.setObjectName("weightsBanner")
+        self.weights_card.setStyleSheet("""
+            QFrame#weightsBanner {
+                background-color: rgba(245, 158, 11, 0.12);
+                border: 1px solid #D97706;
+                border-radius: 6px;
+            }
+            QFrame#weightsBanner QLabel {
+                border: none;
+                background: transparent;
+                color: #FCD34D;
+            }
+        """)
+        wb_layout = QHBoxLayout(self.weights_card)
+        wb_layout.setContentsMargins(8, 5, 8, 5)
+        wb_layout.setSpacing(8)
+
+        icon_warn = QLabel()
+        icon_warn.setPixmap(FI.INFO.icon(color=QColor("#F59E0B")).pixmap(14, 14))
+        wb_layout.addWidget(icon_warn)
+
+        wc_title = QLabel("Weights missing (~5 GB)")
+        wc_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        wc_title.setToolTip("Файлы весов модели CorridorKey 2.0 отсутствуют в папке weights/. Нажмите Download для автоматической загрузки.")
+        wb_layout.addWidget(wc_title, stretch=1)
+
+        btn_dl = QPushButton("Download")
+        btn_dl.setIcon(FI.DOWNLOAD.icon(color=QColor("#FFFFFF")))
+        btn_dl.setIconSize(QSize(12, 12))
+        btn_dl.setProperty("class", "yellow-btn")
+        btn_dl.setStyleSheet("""
+            QPushButton {
+                background-color: #D97706;
+                color: #FFFFFF;
+                font-weight: 700;
+                font-size: 11px;
+                border: 1px solid #F59E0B;
+                border-radius: 4px;
+                padding: 2px 10px;
+            }
+            QPushButton:hover {
+                background-color: #B45309;
+                border-color: #FBBF24;
+            }
+            QPushButton:pressed {
+                background-color: #92400E;
+            }
+        """)
+        btn_dl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_dl.setFixedHeight(24)
+        btn_dl.setToolTip("<b>Скачать веса CorridorKey 2.0 (~5 GB)</b><br>Автоматически загружает веса с Hugging Face и вспомогательные модели C-RADIOv4, MoGe-2, RVM.")
+        btn_dl.clicked.connect(self.download_weights_requested.emit)
+        wb_layout.addWidget(btn_dl)
+        layout.addWidget(self.weights_card)
+        self._check_weights_exist()
+
+        # =====================================================================
+        # 1. INFERENCE & VRAM
+        # =====================================================================
+        tip_vram_sec = "<b>Inference & VRAM</b><br>Параметры нейросетевого движка CorridorKey 2.0 и распределения видеопамяти."
+        layout.addWidget(create_section_header("Inference & VRAM", tip_vram_sec))
+
+        # Hann Window row
+        h_box = QHBoxLayout()
+        h_box.setSpacing(6)
+        lbl_preset = QLabel("Hann Window:")
+        lbl_preset.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_hann = (
+            "<b>Hann Window (Временные окна контекста)</b><br>"
+            "Группирует соседние кадры во временные пачки с перекрытием (Chunk/Stride) для плавности краев и размытия в движении:<br>"
+            "• <b>Auto VRAM</b>: автоматически подбирает максимальный размер окна под 8 GB вашей RTX 5070.<br>"
+            "• <b>High Quality (48 / 24)</b>: кинематографический стандарт, убирает дрожание контуров.<br>"
+            "• <b>Medium (24 / 12)</b>: сбалансированный режим.<br>"
+            "• <b>Low VRAM (8 / 4)</b>: короткое окно при нехватке памяти.<br>"
+            "• <b>Single Frame (1 / 1)</b>: покадровая обработка без контекста (минимальная VRAM)."
+        )
+        lbl_preset.setToolTip(tip_hann)
+        h_box.addWidget(lbl_preset)
+
+        self.cmb_hann_preset = ComboBox()
+        self.cmb_hann_preset.addItems([
+            "Auto VRAM (Optimized for 8 GB)",
+            "High Quality (48 / 24)",
+            "Medium (24 / 12)",
+            "Low VRAM (8 / 4)",
+            "Max Continuity (80 / 40)",
+            "Single Frame (1 / 1)",
+            "Custom...",
+        ])
+        self.cmb_hann_preset.setToolTip(tip_hann)
+        self.cmb_hann_preset.currentIndexChanged.connect(self._on_hann_preset_changed)
+        h_box.addWidget(self.cmb_hann_preset, stretch=1)
+        layout.addLayout(h_box)
+
+        # Custom Chunk / Stride row (hidden by default)
+        self.custom_hann_row = QWidget()
+        chr_layout = QHBoxLayout(self.custom_hann_row)
+        chr_layout.setContentsMargins(0, 0, 0, 0)
+        chr_layout.setSpacing(6)
+
+        lbl_chunk = QLabel("Chunk:")
+        lbl_chunk.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_chunk = "<b>Chunk (Размер окна)</b><br>Количество последовательных кадров, обрабатываемых нейросетью за один шаг."
+        lbl_chunk.setToolTip(tip_chunk)
+        chr_layout.addWidget(lbl_chunk)
+
+        self.spin_hann_chunk = QSpinBox()
+        self.spin_hann_chunk.setRange(1, 128)
+        self.spin_hann_chunk.setValue(48)
+        self.spin_hann_chunk.setToolTip(tip_chunk)
+        self.spin_hann_chunk.valueChanged.connect(self._recalc_vram)
+        chr_layout.addWidget(self.spin_hann_chunk)
+
+        lbl_stride = QLabel("Stride:")
+        lbl_stride.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_stride = "<b>Stride (Шаг сдвига)</b><br>Смещение временного окна между шагами (обычно половина от Chunk)."
+        lbl_stride.setToolTip(tip_stride)
+        chr_layout.addWidget(lbl_stride)
+
+        self.spin_hann_stride = QSpinBox()
+        self.spin_hann_stride.setRange(1, 128)
+        self.spin_hann_stride.setValue(24)
+        self.spin_hann_stride.setToolTip(tip_stride)
+        chr_layout.addWidget(self.spin_hann_stride)
+        self.custom_hann_row.hide()
+        layout.addWidget(self.custom_hann_row)
+
+        # Low VRAM mode
+        self.chk_low_vram = CheckBox("Low GPU Memory (Disk Caching)")
+        self.chk_low_vram.setChecked(False)
+        self.chk_low_vram.setToolTip(
+            "<b>Low GPU Memory (Режим экономии видеопамяти)</b><br>"
+            "Выгружает промежуточные слои внимания на диск (memory map).<br>"
+            "Позволяет рендерить тяжелые 4K кадры на 8 GB VRAM абсолютно без риска ошибки Out Of Memory (OOM)."
+        )
+        self.chk_low_vram.stateChanged.connect(self._recalc_vram)
+        layout.addWidget(self.chk_low_vram)
+
+        # Model Scale row
+        scale_box = QHBoxLayout()
+        scale_box.setSpacing(6)
+        lbl_scale = QLabel("Model Scale:")
+        lbl_scale.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_scale = (
+            "<b>Model Scale (Масштаб инференса)</b><br>"
+            "Разрешение, в котором нейросеть анализирует кадры:<br>"
+            "• <b>1.0x (Native)</b>: исходное разрешение без сжатия.<br>"
+            "• <b>0.50x (Fast)</b>: уменьшает вход в 2 раза, ускоряет рендер в 3-4 раза."
+        )
+        lbl_scale.setToolTip(tip_scale)
+        scale_box.addWidget(lbl_scale)
+
+        self.cmb_model_scale = ComboBox()
+        self.cmb_model_scale.addItems(["1.0x (Native)", "0.75x", "0.50x (Fast)", "1.50x", "2.00x"])
+        self.cmb_model_scale.setToolTip(tip_scale)
+        scale_box.addWidget(self.cmb_model_scale, stretch=1)
+        layout.addLayout(scale_box)
+
+        # Cache folder row
+        temp_box = QHBoxLayout()
+        temp_box.setSpacing(6)
+        lbl_cache = QLabel("Cache Folder:")
+        lbl_cache.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_cache = "<b>Cache Folder (Папка кэша)</b><br>Каталог для временных карт признаков при включенном режиме Low VRAM."
+        lbl_cache.setToolTip(tip_cache)
+        temp_box.addWidget(lbl_cache)
+
+        self.txt_temp_dir = QLineEdit("System Temp")
+        self.txt_temp_dir.setReadOnly(True)
+        self.txt_temp_dir.setToolTip(tip_cache)
+        self.txt_temp_dir.setStyleSheet("background-color: #1A1A20; border: 1px solid #282830; border-radius: 4px; padding: 2px 6px; color: #94A3B8; font-size: 11px;")
+        self.lbl_temp_dir = self.txt_temp_dir
+        temp_box.addWidget(self.txt_temp_dir, stretch=1)
+
+        btn_temp = QPushButton("...")
+        btn_temp.setProperty("class", "pill-btn")
+        btn_temp.setFixedSize(26, 22)
+        btn_temp.setToolTip("Выбрать папку для кэша признаков (если мало места на системном диске)")
+        btn_temp.clicked.connect(self._on_choose_temp_dir)
+        temp_box.addWidget(btn_temp)
+        layout.addLayout(temp_box)
+
+        layout.addWidget(create_separator())
+
+        # =====================================================================
+        # 2. ALPHA HINT & TRACKING
+        # =====================================================================
+        tip_hint_sec = "<b>Alpha Hint (Подсказка маски)</b><br>Направление нейросети по вспомогательной маске для сложных сцен или съемки без хромакея."
+        layout.addWidget(create_section_header("Alpha Hint & Tracking", tip_hint_sec))
+
+        # Hint Header row: Title on left, Browse & Clear buttons on right
+        hint_head_row = QHBoxLayout()
+        hint_head_row.setSpacing(6)
+        lbl_hint_title = QLabel("Hint File:")
+        lbl_hint_title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_hint_file = (
+            "<b>Hint File (Файл подсказки)</b><br>"
+            "• Картинка маски 1-го кадра (PNG, JPG, EXR)<br>"
+            "• Видеоролик маски/ротоскопа (MP4, MOV)<br>"
+            "Белый цвет — объект, черный — фон."
+        )
+        lbl_hint_title.setToolTip(tip_hint_file)
+        hint_head_row.addWidget(lbl_hint_title)
+        hint_head_row.addStretch()
+
+        self.btn_pick_hint = QPushButton("Browse...")
+        self.btn_pick_hint.setIcon(FI.FOLDER.icon(Theme.DARK))
+        self.btn_pick_hint.setIconSize(QSize(12, 12))
+        self.btn_pick_hint.setProperty("class", "pill-btn")
+        self.btn_pick_hint.setFixedHeight(22)
+        self.btn_pick_hint.setToolTip(tip_hint_file)
+        self.btn_pick_hint.clicked.connect(self._on_choose_hint)
+        hint_head_row.addWidget(self.btn_pick_hint)
+
+        self.btn_clear_hint = QPushButton()
+        self.btn_clear_hint.setIcon(FI.CLOSE.icon(color=QColor("#FFFFFF")))
+        self.btn_clear_hint.setIconSize(QSize(12, 12))
+        self.btn_clear_hint.setFixedSize(22, 22)
+        self.btn_clear_hint.setStyleSheet("QPushButton { background-color: #222228; border: 1px solid #363640; border-radius: 4px; } QPushButton:hover { background-color: #32323A; }")
+        self.btn_clear_hint.setToolTip("Сбросить выбранную подсказку и вернуть автоматическое вырезание")
+        self.btn_clear_hint.clicked.connect(self._on_clear_hint)
+        hint_head_row.addWidget(self.btn_clear_hint)
+        layout.addLayout(hint_head_row)
+
+        # Full-width hint file display
+        self.txt_hint_path = QLineEdit("None (Auto Segmentation)")
+        self.txt_hint_path.setReadOnly(True)
+        self.txt_hint_path.setToolTip("Нейросеть автоматически сегментирует главный объект без подсказки.")
+        self.txt_hint_path.setStyleSheet("background-color: #1A1A20; border: 1px solid #282830; border-radius: 4px; padding: 2px 6px; color: #94A3B8; font-size: 11px;")
+        self.lbl_hint_name = self.txt_hint_path
+        layout.addWidget(self.txt_hint_path)
+
+        # Hint Mode row
+        hm_box = QHBoxLayout()
+        hm_box.setSpacing(6)
+        lbl_hm = QLabel("Hint Mode:")
+        lbl_hm.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_hm = (
+            "<b>Hint Mode (Режим подсказки)</b><br>"
+            "• <b>First Frame Only</b>: достаточно грубой маски первого кадра, дальше модель отслеживает объект сама.<br>"
+            "• <b>Video Matte</b>: покадровая маска на всё видео."
+        )
+        lbl_hm.setToolTip(tip_hm)
+        hm_box.addWidget(lbl_hm)
+
+        self.cmb_hint_frames = ComboBox()
+        self.cmb_hint_frames.addItems(["First Frame Only", "Video Matte"])
+        self.cmb_hint_frames.setToolTip(tip_hm)
+        hm_box.addWidget(self.cmb_hint_frames, stretch=1)
+        layout.addLayout(hm_box)
+
+        # Hint Trust inline row: Label | Slider | Value
+        ht_box = QHBoxLayout()
+        ht_box.setSpacing(8)
+        lbl_ht = QLabel("Trust:")
+        lbl_ht.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_trust = (
+            "<b>Hint Trust (Доверие подсказке)</b><br>"
+            "Степень уверенности модели в предоставленной маске (hint_quality):<br>"
+            "• <b>0.95</b>: точная чистая маска от художника.<br>"
+            "• <b>0.70</b>: примерный набросок контура объекта."
+        )
+        lbl_ht.setToolTip(tip_trust)
+        ht_box.addWidget(lbl_ht)
+
+        self.slider_hint_quality = Slider(Qt.Orientation.Horizontal)
+        self.slider_hint_quality.setRange(10, 100)
+        self.slider_hint_quality.setValue(95)
+        self.slider_hint_quality.setToolTip(tip_trust)
+        ht_box.addWidget(self.slider_hint_quality, stretch=1)
+
+        self.lbl_ht_val = QLabel("0.95")
+        self.lbl_ht_val.setFixedWidth(28)
+        self.lbl_ht_val.setStyleSheet("color: #FFFFFF; font-weight: 700; font-size: 11px;")
+        self.lbl_ht_val.setToolTip(tip_trust)
+        self.slider_hint_quality.valueChanged.connect(lambda v: self.lbl_ht_val.setText(f"{v/100:.2f}"))
+        ht_box.addWidget(self.lbl_ht_val)
+        layout.addLayout(ht_box)
+
+        # Carry Hint Switch
+        self.chk_carry_hint = CheckBox("Hann Temporal Carry Hint")
+        self.chk_carry_hint.setChecked(True)
+        self.chk_carry_hint.setToolTip(
+            "<b>Hann Temporal Carry Hint (Перенос маски)</b><br>"
+            "Модель передает надежные предсказания из предыдущих окон как подсказку для следующих кадров, стабилизируя трекинг на длинных планах."
+        )
+        layout.addWidget(self.chk_carry_hint)
+
+        layout.addWidget(create_separator())
+
+        # =====================================================================
+        # 3. DESPILL & COLOR SCIENCE
+        # =====================================================================
+        tip_despill_sec = "<b>Despill & Color (Подавление рефлексов фона)</b><br>Устранение зеленого или синего паразитного свечения экрана на волосах и границах объекта."
+        layout.addWidget(create_section_header("Despill & Color", tip_despill_sec))
+
+        dc_box = QHBoxLayout()
+        dc_box.setSpacing(6)
+        lbl_dc = QLabel("Screen Color:")
+        lbl_dc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_dc = "<b>Screen Color (Цвет фона)</b><br>Цвет экрана (зеленый или синий), оттенок которого нужно нейтрализовать."
+        lbl_dc.setToolTip(tip_dc)
+        dc_box.addWidget(lbl_dc)
+
+        self.cmb_despill_color = ComboBox()
+        self.cmb_despill_color.addItems(["Green", "Blue"])
+        self.cmb_despill_color.setToolTip(tip_dc)
+        dc_box.addWidget(self.cmb_despill_color, stretch=1)
+        layout.addLayout(dc_box)
+
+        # Despill Strength inline row: Label | Slider | Value
+        ds_box = QHBoxLayout()
+        ds_box.setSpacing(8)
+        lbl_ds = QLabel("Despill:")
+        lbl_ds.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_ds = (
+            "<b>Despill Strength (Сила подавления)</b><br>"
+            "• <b>0.50</b>: стандартная сила для хромакея (зеленый/синий экран).<br>"
+            "• <b>0.00</b>: ВЫКЛЮЧЕНО (обязательно для белых обоев, интерьера или произвольного фона, чтобы сохранить естественный цвет кожи и одежды!).<br>"
+            "• <b>1.00</b>: максимальная нейтрализация оттенка."
+        )
+        lbl_ds.setToolTip(tip_ds)
+        ds_box.addWidget(lbl_ds)
+
+        self.slider_despill = Slider(Qt.Orientation.Horizontal)
+        self.slider_despill.setRange(0, 100)
+        self.slider_despill.setValue(50)
+        self.slider_despill.setToolTip(tip_ds)
+        ds_box.addWidget(self.slider_despill, stretch=1)
+
+        self.lbl_ds_val = QLabel("0.50")
+        self.lbl_ds_val.setFixedWidth(28)
+        self.lbl_ds_val.setStyleSheet("color: #FFFFFF; font-weight: 700; font-size: 11px;")
+        self.lbl_ds_val.setToolTip(tip_ds)
+        self.slider_despill.valueChanged.connect(lambda v: self.lbl_ds_val.setText(f"{v/100:.2f}"))
+        ds_box.addWidget(self.lbl_ds_val)
+        layout.addLayout(ds_box)
+
+        # Linear Brightness & Contrast (clean side-by-side)
+        bc_layout = QHBoxLayout()
+        bc_layout.setSpacing(6)
+        tip_bc = "<b>Linear Brightness & Contrast</b><br>Коррекция экспозиции и контраста переднего плана в линейном цветовом пространстве."
+
+        lbl_bright = QLabel("Brightness:")
+        lbl_bright.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        lbl_bright.setToolTip(tip_bc)
+        bc_layout.addWidget(lbl_bright)
+
+        self.spin_brightness = QDoubleSpinBox()
+        self.spin_brightness.setRange(0.0, 5.0)
+        self.spin_brightness.setSingleStep(0.05)
+        self.spin_brightness.setValue(1.0)
+        self.spin_brightness.setFixedWidth(58)
+        self.spin_brightness.setToolTip(tip_bc)
+        bc_layout.addWidget(self.spin_brightness)
+
+        bc_layout.addSpacing(6)
+
+        lbl_contrast = QLabel("Contrast:")
+        lbl_contrast.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        lbl_contrast.setToolTip(tip_bc)
+        bc_layout.addWidget(lbl_contrast)
+
+        self.spin_contrast = QDoubleSpinBox()
+        self.spin_contrast.setRange(0.0, 5.0)
+        self.spin_contrast.setSingleStep(0.05)
+        self.spin_contrast.setValue(1.0)
+        self.spin_contrast.setFixedWidth(58)
+        self.spin_contrast.setToolTip(tip_bc)
+        bc_layout.addWidget(self.spin_contrast)
+        layout.addLayout(bc_layout)
+
+        # Advanced VFX Linear Flags
+        self.chk_cutout_linear = CheckBox("Cutout Straight Linear RGB (32-bit VFX)")
+        self.chk_cutout_linear.setChecked(False)
+        self.chk_cutout_linear.setToolTip(
+            "<b>Cutout Straight Linear RGB</b><br>"
+            "Экспорт вырезанного клипа в чистом линейном RGB (без sRGB гаммы и без премультипликации) для профессионального композа в DaVinci Fusion, Nuke, After Effects."
+        )
+        layout.addWidget(self.chk_cutout_linear)
+
+        self.chk_frame_dir_linear = CheckBox("Input EXR as Scene-Linear")
+        self.chk_frame_dir_linear.setChecked(False)
+        self.chk_frame_dir_linear.setToolTip(
+            "<b>Input EXR as Scene-Linear</b><br>"
+            "Интерпретировать входящие секвенции OpenEXR как scene-linear gamma вместо sRGB."
+        )
+        layout.addWidget(self.chk_frame_dir_linear)
+
+        layout.addWidget(create_separator())
+
+        # =====================================================================
+        # 4. DELIVER & EXPORT
+        # =====================================================================
+        tip_deliver_sec = "<b>Deliver (Экспорт)</b><br>Настройка выходных пассов, видеокодека, папки сохранения и запуск рендеринга."
+        layout.addWidget(create_section_header("Deliver", tip_deliver_sec))
+
+        # Passes 2x2 grid
+        passes_grid = QHBoxLayout()
+        self.chk_out_cutout = CheckBox("Cutout (RGBA)")
+        self.chk_out_cutout.setChecked(True)
+        self.chk_out_cutout.setToolTip("<b>Cutout Pass</b><br>Вырезанный клип с прозрачным фоном и despill.")
+        passes_grid.addWidget(self.chk_out_cutout)
+
+        self.chk_out_alpha = CheckBox("Alpha (Matte)")
+        self.chk_out_alpha.setChecked(True)
+        self.chk_out_alpha.setToolTip("<b>Alpha Matte Pass</b><br>Черно-белая маска прозрачности (белый — объект, черный — фон).")
+        passes_grid.addWidget(self.chk_out_alpha)
+        layout.addLayout(passes_grid)
+
+        passes_grid2 = QHBoxLayout()
+        self.chk_out_fg = CheckBox("FG (Foreground)")
+        self.chk_out_fg.setChecked(True)
+        self.chk_out_fg.setToolTip("<b>Foreground Pass</b><br>RGB изображение переднего плана с очищенным фоном.")
+        passes_grid2.addWidget(self.chk_out_fg)
+
+        self.chk_out_checker = CheckBox("Checker (Preview)")
+        self.chk_out_checker.setChecked(True)
+        self.chk_out_checker.setToolTip("<b>Checker Preview Pass</b><br>Композит на шахматной сетке для быстрой визуальной проверки краев.")
+        passes_grid2.addWidget(self.chk_out_checker)
+        layout.addLayout(passes_grid2)
+
+        fmt_box = QHBoxLayout()
+        fmt_box.setSpacing(6)
+        lbl_fmt = QLabel("Format:")
+        lbl_fmt.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_fmt = (
+            "<b>Output Format (Формат вывода)</b><br>"
+            "• <b>MP4 Video (10-bit x264)</b>: студийное x264 yuv444p10le без бандинга градиентов.<br>"
+            "• <b>MP4 Video (8-bit x264)</b>: стандартная совместимость yuv444p со всеми плеерами.<br>"
+            "• <b>EXR Sequence (16-bit Half)</b>: покадровая кино-секвенция для VFX.<br>"
+            "• <b>EXR Sequence (32-bit Float)</b>: полноразрядные float 32-bit кадры."
+        )
+        lbl_fmt.setToolTip(tip_fmt)
+        fmt_box.addWidget(lbl_fmt)
+
+        self.cmb_format = ComboBox()
+        self.cmb_format.addItems([
+            "MP4 Video (10-bit x264)",
+            "MP4 Video (8-bit x264)",
+            "EXR Sequence (16-bit Half)",
+            "EXR Sequence (32-bit Float)",
+        ])
+        self.cmb_format.setToolTip(tip_fmt)
+        fmt_box.addWidget(self.cmb_format, stretch=1)
+        layout.addLayout(fmt_box)
+
+        # Output folder header: Label on left, Browse on right
+        out_f_head = QHBoxLayout()
+        out_f_head.setSpacing(6)
+        lbl_out = QLabel("Output Folder:")
+        lbl_out.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_out = "<b>Output Folder (Папка экспорта)</b><br>Каталог, в который будут сохранены готовые файлы."
+        lbl_out.setToolTip(tip_out)
+        out_f_head.addWidget(lbl_out)
+        out_f_head.addStretch()
+
+        btn_out_dir = QPushButton("Browse...")
+        btn_out_dir.setIcon(FI.FOLDER.icon(Theme.DARK))
+        btn_out_dir.setIconSize(QSize(12, 12))
+        btn_out_dir.setProperty("class", "pill-btn")
+        btn_out_dir.setFixedHeight(22)
+        btn_out_dir.setToolTip("Выбрать папку для сохранения экспортированных видео")
+        btn_out_dir.clicked.connect(self._on_choose_out_dir)
+        out_f_head.addWidget(btn_out_dir)
+        layout.addLayout(out_f_head)
+
+        # Full-width output directory display
+        self.txt_out_dir = QLineEdit(self.output_dir)
+        self.txt_out_dir.setReadOnly(True)
+        self.txt_out_dir.setToolTip(self.output_dir)
+        self.txt_out_dir.setStyleSheet("background-color: #1A1A20; border: 1px solid #282830; border-radius: 4px; padding: 2px 6px; color: #94A3B8; font-size: 11px;")
+        self.lbl_out_dir = self.txt_out_dir
+        layout.addWidget(self.txt_out_dir)
+
+        # Frame limit test row
+        limit_box = QHBoxLayout()
+        limit_box.setSpacing(8)
+        self.chk_limit_frames = CheckBox("Limit Frames:")
+        self.chk_limit_frames.setChecked(False)
+        tip_limit = "<b>Limit Frames (Ограничение кадров)</b><br>Рендерить только первые N кадров для быстрой проверки качества."
+        self.chk_limit_frames.setToolTip(tip_limit)
+        limit_box.addWidget(self.chk_limit_frames)
+
+        self.spin_num_frames = QSpinBox()
+        self.spin_num_frames.setRange(1, 999999)
+        self.spin_num_frames.setValue(60)
+        self.spin_num_frames.setFixedWidth(65)
+        self.spin_num_frames.setEnabled(False)
+        self.spin_num_frames.setToolTip(tip_limit)
+        self.chk_limit_frames.stateChanged.connect(lambda s: self.spin_num_frames.setEnabled(bool(s)))
+        limit_box.addWidget(self.spin_num_frames)
+        limit_box.addStretch()
+        layout.addLayout(limit_box)
+
+        # Calculated memory requirements
+        self.lbl_vram_info = QLabel("Select a clip to estimate VRAM requirements.")
+        self.lbl_vram_info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
+        self.lbl_vram_info.setToolTip("<b>VRAM Estimate (Оценка видеопамяти)</b><br>Автоматический расчет требуемой VRAM под разрешение клипа и размер окна Hann с учетом 8 GB на вашей RTX 5070.")
+        layout.addWidget(self.lbl_vram_info)
+
+        # Action Buttons Row
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+
+        self.btn_add_queue = QPushButton("+ Add to Queue")
+        self.btn_add_queue.setIcon(FI.ADD.icon(Theme.DARK))
+        self.btn_add_queue.setIconSize(QSize(12, 12))
+        self.btn_add_queue.setProperty("class", "pill-btn")
+        self.btn_add_queue.setFixedHeight(30)
+        self.btn_add_queue.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_add_queue.setToolTip("<b>Add to Queue (В очередь)</b><br>Добавить клип с текущими выбранными настройками в список очереди задач.")
+        self.btn_add_queue.clicked.connect(self._on_add_queue)
+        action_row.addWidget(self.btn_add_queue)
+
+        self.btn_render = QPushButton("▶ Render")
+        self.btn_render.setIcon(FI.PLAY.icon(color=QColor("#FFFFFF")))
+        self.btn_render.setIconSize(QSize(13, 13))
+        self.btn_render.setProperty("class", "primary-btn")
+        self.btn_render.setFixedHeight(30)
+        self.btn_render.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_render.setToolTip("<b>Render (Рендерить, Ctrl+R)</b><br>Немедленно запустить инференс CorridorKey 2.0 для текущего клипа в изолированном фоновом процессе.")
+        self.btn_render.clicked.connect(self._on_render)
+        action_row.addWidget(self.btn_render, stretch=1)
+
+        layout.addLayout(action_row)
+        layout.addStretch()
+
+    def _check_weights_exist(self):
+        try:
+            from gui.managers.weights_manager import WeightsManager
+            has_weights = WeightsManager.are_all_weights_present()
+        except Exception:
+            root = Path(__file__).resolve().parent.parent.parent
+            weights_file = root / "weights" / "corridorkey_v2.safetensors"
+            has_weights = weights_file.exists() or (root / "weights" / "corridorkey_v2.pt").exists()
+        self.weights_card.setVisible(not has_weights)
+
+    def set_clip(self, clip: Optional[ClipInfo]):
+        self.current_clip = clip
+        if clip is not None:
+            if clip.discovered_hint_path:
+                self.hint_file_path = clip.discovered_hint_path
+                self.txt_hint_path.setText(os.path.basename(clip.discovered_hint_path))
+                self.txt_hint_path.setToolTip(clip.discovered_hint_path)
+                if clip.discovered_hint_mode == "first_frame":
+                    self.cmb_hint_frames.setCurrentIndex(0)
+                else:
+                    self.cmb_hint_frames.setCurrentIndex(1)
+            else:
+                self.hint_file_path = ""
+                self.txt_hint_path.setText("None (Auto Segmentation)")
+                self.txt_hint_path.setToolTip("Нейросеть автоматически сегментирует главный объект без подсказки.")
+        self._recalc_vram()
+
+    def _on_hann_preset_changed(self, idx: int):
+        self.custom_hann_row.setVisible(idx == 6)
+        presets = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
+        if idx in presets:
+            c, s = presets[idx]
+            self.spin_hann_chunk.setValue(c)
+            self.spin_hann_stride.setValue(s)
+        self._recalc_vram()
+
+    def _recalc_vram(self):
+        if self.current_clip is None:
+            self.lbl_vram_info.setText("Select a clip to estimate VRAM requirements.")
+            self.lbl_vram_info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
+            return
+
+        low_vram = self.chk_low_vram.isChecked()
+        preset_idx = self.cmb_hann_preset.currentIndex()
+        if preset_idx == 0:
+            hann_chunk = 80
+        elif preset_idx == 6:
+            hann_chunk = self.spin_hann_chunk.value()
+        else:
+            hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 40)
+
+        vram_needed, fits = calculate_clip_vram_estimate(
+            self.current_clip.width,
+            self.current_clip.height,
+            self.current_clip.total_frames,
+            low_vram=low_vram,
+            hann_chunk=hann_chunk,
+        )
+
+        gpu_info = get_gpu_info()
+        total_gpu = gpu_info.get("total_gb", 8.0)
+
+        status_color = CORRIDOR_GREEN if fits else "#F87171"
+        status_text = "VRAM OK" if fits else "Warning: VRAM may exceed capacity"
+
+        self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required")
+        self.lbl_vram_info.setStyleSheet(
+            f"color: {status_color}; font-size: 11px; padding: 2px;"
+        )
+
+    def _on_choose_hint(self):
+        fpath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Alpha Hint File",
+            "",
+            "Matte and Video Files (*.png *.jpg *.jpeg *.mp4 *.mov *.exr);;All Files (*.*)",
+        )
+        if fpath:
+            self.hint_file_path = fpath
+            self.txt_hint_path.setText(os.path.basename(fpath))
+            self.txt_hint_path.setToolTip(fpath)
+            ext = Path(fpath).suffix.lower()
+            if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm"}:
+                self.cmb_hint_frames.setCurrentIndex(1)
+            else:
+                self.cmb_hint_frames.setCurrentIndex(0)
+
+    def _on_clear_hint(self):
+        self.hint_file_path = ""
+        self.txt_hint_path.setText("None (Auto Segmentation)")
+        self.txt_hint_path.setToolTip("Нейросеть автоматически сегментирует главный объект без подсказки.")
+
+    def _on_choose_temp_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "Select Feature Cache Directory")
+        if d:
+            self.custom_temp_dir = d
+            self.txt_temp_dir.setText(os.path.basename(d))
+            self.txt_temp_dir.setToolTip(d)
+
+    def _on_choose_out_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "Select Export Directory", self.output_dir)
+        if d:
+            self.output_dir = d
+            self.txt_out_dir.setText(d)
+            self.txt_out_dir.setToolTip(d)
+            self._recalc_vram()
+
+    def get_render_task(self, clip: Optional[ClipInfo] = None) -> Optional[RenderTask]:
+        target_clip = clip or self.current_clip
+        if target_clip is None:
+            return None
+
+        outputs = []
+        if self.chk_out_cutout.isChecked():
+            outputs.append("cutout")
+        if self.chk_out_alpha.isChecked():
+            outputs.append("alpha")
+        if self.chk_out_fg.isChecked():
+            outputs.append("fg")
+        if self.chk_out_checker.isChecked():
+            outputs.append("checker")
+        if not outputs:
+            outputs = ["cutout", "alpha", "fg", "checker"]
+
+        fmt_idx = self.cmb_format.currentIndex()
+        if fmt_idx == 0:
+            out_fmt = "video"
+            pix_fmt = "yuv444p10le"
+            exr_dtype = "half"
+        elif fmt_idx == 1:
+            out_fmt = "video"
+            pix_fmt = "yuv444p"
+            exr_dtype = "half"
+        elif fmt_idx == 2:
+            out_fmt = "exr"
+            pix_fmt = "yuv444p10le"
+            exr_dtype = "half"
+        else:
+            out_fmt = "exr"
+            pix_fmt = "yuv444p10le"
+            exr_dtype = "float"
+
+        preset_idx = self.cmb_hann_preset.currentIndex()
+        auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
+
+        if preset_idx == 6:
+            hann_chunk = self.spin_hann_chunk.value()
+            hann_stride = self.spin_hann_stride.value()
+        else:
+            hann_map = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
+            hann_chunk, hann_stride = hann_map.get(preset_idx, (48, 24))
+
+        scale_vals = [1.0, 0.75, 0.50, 1.50, 2.00]
+        model_scale = scale_vals[self.cmb_model_scale.currentIndex()]
+
+        num_frames = self.spin_num_frames.value() if self.chk_limit_frames.isChecked() else -1
+
+        import uuid
+        task_id = str(uuid.uuid4())[:8]
+        clip_out_dir = os.path.join(self.output_dir, f"out_{Path(target_clip.name).stem}")
+
+        use_hint = bool(self.hint_file_path)
+
+        return RenderTask(
+            task_id=task_id,
+            clip_path=target_clip.path,
+            output_dir=clip_out_dir,
+            clip_name=target_clip.name,
+            total_frames=target_clip.total_frames,
+            weights_path=self.custom_weights_path or None,
+            use_alpha_hint=use_hint,
+            alpha_hint_path=self.hint_file_path,
+            hint_mode="first_frame" if self.cmb_hint_frames.currentIndex() == 0 else "all_frames",
+            hint_quality=self.slider_hint_quality.value() / 100.0,
+            carry_hint_quality=self.slider_hint_quality.value() / 100.0,
+            carry_hint=self.chk_carry_hint.isChecked(),
+            hann_chunk=hann_chunk,
+            hann_stride=hann_stride,
+            low_vram=self.chk_low_vram.isChecked(),
+            auto_vram=auto_vram,
+            temp_dir=self.custom_temp_dir or None,
+            outputs=outputs,
+            num_frames=num_frames,
+            start_mode="begin",
+            seed=0,
+            model_scale=model_scale,
+            frame_dir_fps=target_clip.fps or 24.0,
+            frame_dir_linear=self.chk_frame_dir_linear.isChecked(),
+            cutout_linear=self.chk_cutout_linear.isChecked(),
+            despill_strength=self.slider_despill.value() / 100.0,
+            linear_brightness=self.spin_brightness.value(),
+            linear_contrast=self.spin_contrast.value(),
+            linear_contrast_pivot=0.18,
+            output_format=out_fmt,
+            exr_dtype=exr_dtype,
+            ffmpeg_codec="libx264",
+            crf=12,
+            preset="medium",
+            pix_fmt=pix_fmt,
+        )
+
+    def _on_render(self):
+        task = self.get_render_task()
+        if task is not None:
+            self.render_requested.emit(task)
+
+    def _on_add_queue(self):
+        task = self.get_render_task()
+        if task is not None:
+            self.add_queue_requested.emit(task)

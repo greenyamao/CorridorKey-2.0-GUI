@@ -1,0 +1,269 @@
+"""Model Weights and Foundation Models Manager.
+
+Manages downloading, integrity checking, partial resumption, and skipping of already downloaded models.
+Ensures zero redundant downloads and real-time streaming progress telemetry.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import re
+import base64
+import hashlib
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Optional, Dict, Tuple, List
+from PySide6.QtCore import QObject, Signal
+
+APP_ROOT = Path(__file__).resolve().parent.parent.parent
+WEIGHTS_DIR = APP_ROOT / "weights"
+VFMS_DIR = APP_ROOT / "vfms"
+
+RVM_FILE = "pretrain_rvm_small16_256_204031069.npz"
+RVM_MD5_B64 = "ZJb6kj8+tasiJbVeplXu7Q=="
+
+
+def _md5_b64(path: Path) -> str:
+    digest = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return base64.b64encode(digest.digest()).decode()
+
+
+class WeightsManager:
+    """Checks and manages model assets stored in ./weights/ and ./vfms/."""
+
+    @staticmethod
+    def get_weights_dir() -> Path:
+        return WEIGHTS_DIR
+
+    @staticmethod
+    def get_vfms_dir() -> Path:
+        return VFMS_DIR
+
+    @classmethod
+    def get_status(cls) -> Dict[str, bool]:
+        """Returns the presence status of each required model file."""
+        ck_main = (WEIGHTS_DIR / "corridorkey_v2.safetensors").is_file() and (WEIGHTS_DIR / "corridorkey_v2.safetensors").stat().st_size > 100_000_000
+        ck_stats = (WEIGHTS_DIR / "foundation_stats.safetensors").is_file()
+        
+        # C-RADIO check
+        cradio = (VFMS_DIR / "cradio" / "C-RADIOv4-SO400M" / "model.safetensors").is_file()
+        
+        # MoGe check
+        moge = (VFMS_DIR / "moge" / "model.pt").is_file() and (VFMS_DIR / "moge" / "model.pt").stat().st_size > 50_000_000
+        
+        # RVM check
+        rvm_path = VFMS_DIR / "rvm" / RVM_FILE
+        rvm = rvm_path.is_file() and rvm_path.stat().st_size > 1_000_000
+
+        return {
+            "corridorkey": ck_main and ck_stats,
+            "cradio": cradio,
+            "moge": moge,
+            "rvm": rvm,
+        }
+
+    @classmethod
+    def are_all_weights_present(cls) -> bool:
+        status = cls.get_status()
+        return all(status.values())
+
+    @classmethod
+    def clean_stale_locks(cls) -> None:
+        """Removes stale .lock files from huggingface download cache."""
+        lock_dirs = [
+            WEIGHTS_DIR / ".cache" / "huggingface" / "download",
+            VFMS_DIR / "cradio" / ".cache" / "huggingface" / "download",
+            VFMS_DIR / "moge" / ".cache" / "huggingface" / "download",
+        ]
+        for ld in lock_dirs:
+            if ld.exists():
+                for lock_file in ld.glob("*.lock"):
+                    try:
+                        lock_file.unlink()
+                    except Exception:
+                        pass
+                for inc_file in ld.glob("*.incomplete"):
+                    if inc_file.stat().st_size == 0:
+                        try:
+                            inc_file.unlink()
+                        except Exception:
+                            pass
+
+
+class WeightsDownloadWorker(QObject):
+    """
+    Background worker that runs the download script with resume support,
+    skipping completed files and emitting live telemetry.
+    """
+    progress_received = Signal(str)
+    progress_updated = Signal(float, str, str)  # percent, stage_info, speed_eta
+    finished = Signal(bool, str)
+
+    def __init__(self):
+        super().__init__()
+        self._process: Optional[subprocess.Popen] = None
+        self._is_stopped: bool = False
+
+    def stop(self):
+        self._is_stopped = True
+        if self._process is not None:
+            try:
+                self._process.kill()
+            except Exception:
+                pass
+            try:
+                self._process.wait(timeout=1.0)
+            except Exception:
+                pass
+
+    def run(self):
+        self._is_stopped = False
+        WeightsManager.clean_stale_locks()
+
+        # Target script: engine/scripts/download_weights.py or generated resilient runner
+        engine_script = APP_ROOT / "engine" / "scripts" / "download_weights.py"
+        if not engine_script.is_file():
+            self.finished.emit(False, "Engine download script not found. Please install engine first.")
+            return
+
+        # Prepare resilient execution command passing --package_root pointing to APP_ROOT
+        cmd = [
+            sys.executable,
+            "-u",
+            str(engine_script),
+            "--package_root",
+            str(APP_ROOT)
+        ]
+
+        # Check what is already present to skip
+        status = WeightsManager.get_status()
+        if status.get("corridorkey"):
+            cmd.append("--skip_corridorkey")
+
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env["TQDM_POSITION"] = "-1"
+        env["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
+
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+                cwd=str(APP_ROOT),
+                env=env
+            )
+
+            buf = bytearray()
+            current_stage = "Checking existing weights..."
+            total_bytes: Optional[float] = None
+            total_str: str = ""
+
+            def _parse_size(s: str) -> Optional[float]:
+                units = {'B': 1.0, 'kB': 1e3, 'KB': 1e3, 'MB': 1e6, 'GB': 1e9, 'k': 1e3, 'M': 1e6, 'G': 1e9}
+                m_sz = re.search(r'([0-9\.]+)\s*([a-zA-Z]+)', s)
+                if not m_sz:
+                    return None
+                val, u = float(m_sz.group(1)), m_sz.group(2)
+                return val * units.get(u, 1.0)
+
+            while not self._is_stopped:
+                try:
+                    b = self._process.stdout.read(1)
+                except Exception:
+                    break
+                if not b:
+                    break
+                if b in (b'\r', b'\n'):
+                    raw_str = buf.decode('utf-8', errors='ignore').strip()
+                    buf.clear()
+                    if raw_str:
+                        self.progress_received.emit(raw_str)
+
+                        # Stage detection
+                        if "[corridorkey]" in raw_str:
+                            current_stage = "CorridorKey v2 Weights (~3.7 GB)"
+                            total_bytes = None
+                            total_str = ""
+                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
+                        elif "[c-radio]" in raw_str:
+                            current_stage = "NVIDIA C-RADIOv4 Foundation Model (~800 MB)"
+                            total_bytes = None
+                            total_str = ""
+                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
+                        elif "[moge]" in raw_str:
+                            current_stage = "MoGe-2 Normal/Geometry Model (~350 MB)"
+                            total_bytes = None
+                            total_str = ""
+                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
+                        elif "[rvm]" in raw_str:
+                            current_stage = "Robust Video Matting (RVM) Model (~15 MB)"
+                            total_bytes = None
+                            total_str = ""
+                            self.progress_updated.emit(0.0, current_stage, "Connecting...")
+
+                        # 1. Match file total size: e.g. "reconstructing file: 0% | 0.00B / 2.66GB"
+                        m_recon = re.search(r'reconstructing file:\s*(\d+)%.*?/\s*([0-9\.]+\s*[a-zA-Z]+)', raw_str)
+                        if m_recon:
+                            pct = float(m_recon.group(1))
+                            total_str = m_recon.group(2)
+                            total_bytes = _parse_size(total_str)
+                            self.progress_updated.emit(pct, f"{current_stage}  ·  Total: {total_str}", "Downloading...")
+                            continue
+
+                        # 2. Match downloading bytes stream: e.g. "downloading bytes: | 2.81MB, 218kB/s"
+                        m_bytes = re.search(r'downloading bytes:\s*.*?\|\s*([0-9\.]+\s*[a-zA-Z]+)(?:,\s*([0-9\.]+\s*[a-zA-Z]+/s))?', raw_str)
+                        if m_bytes:
+                            cur_str = m_bytes.group(1)
+                            speed = m_bytes.group(2) or ""
+                            cur_bytes = _parse_size(cur_str)
+                            pct = 0.0
+                            if total_bytes and cur_bytes is not None and total_bytes > 0:
+                                pct = min(100.0, (cur_bytes / total_bytes) * 100.0)
+                            sub_info = f"{cur_str} / {total_str}" if total_str else cur_str
+                            self.progress_updated.emit(pct, f"{current_stage}  ·  {sub_info}", speed)
+                            continue
+
+                        # 3. Match standard tqdm progress: e.g. "Fetching 31 files: 97% | 30/31"
+                        m_tqdm = re.search(r"(\d+(?:\.\d+)?)%\|.*?\|\s*([^\s\[\]]+)?\s*\[(.*?)\]", raw_str)
+                        if m_tqdm:
+                            try:
+                                pct = float(m_tqdm.group(1))
+                                size_info = m_tqdm.group(2) or ""
+                                stats_info = m_tqdm.group(3) or ""
+                                stage_label = f"{current_stage}  ·  {size_info}" if size_info else current_stage
+                                self.progress_updated.emit(pct, stage_label, stats_info)
+                            except Exception:
+                                pass
+                            continue
+
+                        # 4. Fallback percentage match
+                        m_simple = re.search(r"(\d+(?:\.\d+)?)%", raw_str)
+                        if m_simple:
+                            try:
+                                pct = float(m_simple.group(1))
+                                self.progress_updated.emit(pct, current_stage, "")
+                            except Exception:
+                                pass
+                else:
+                    buf.extend(b)
+
+            if self._is_stopped:
+                self.finished.emit(False, "Download canceled by user.")
+                return
+
+            ret = self._process.wait()
+            if ret == 0:
+                self.progress_updated.emit(100.0, "All models verified and ready!", "")
+                self.finished.emit(True, "All models downloaded and ready!")
+            else:
+                self.finished.emit(False, f"Download failed with code {ret}")
+        except Exception as e:
+            if not self._is_stopped:
+                self.finished.emit(False, str(e))

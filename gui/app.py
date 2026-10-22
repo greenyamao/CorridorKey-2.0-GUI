@@ -1,0 +1,698 @@
+from __future__ import annotations
+
+import sys
+import os
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QSize
+from PySide6.QtGui import QIcon, QFont, QColor, QCursor, QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QSplitter,
+    QLabel,
+    QPushButton,
+    QComboBox,
+    QMessageBox,
+    QDialog,
+    QProgressBar,
+    QTextEdit,
+    QFrame,
+    QStatusBar,
+)
+from qfluentwidgets import FluentIcon as FI, Theme, setTheme
+
+from gui.styles.theme import (
+    ACCENT_BLUE,
+    ACCENT_CYAN,
+    CORRIDOR_YELLOW,
+    CORRIDOR_GREEN,
+    BG_CANVAS,
+    CARD_BG,
+    BORDER_SUBTLE,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+    TEXT_MUTED,
+    DARK_WORKBENCH_QSS,
+)
+from gui.backend.system_monitor import get_gpu_info, get_disk_free_gb
+from gui.backend.video_loader import ClipInfo, VideoReader, probe_clip, scan_directory_for_clips
+from gui.backend.render_worker import RenderTask, RenderRunner, WeightDownloader
+from gui.managers import FFmpegManager, EngineManager, WeightsManager
+from gui.components.media_panel import MediaPanel
+from gui.components.viewport import ViewportWidget
+from gui.components.timeline import TimelineWidget
+from gui.components.inspector import InspectorPanel
+
+
+class WeightDownloadDialog(QDialog):
+    """Dialog for downloading model weights with a live progress bar, speed, and ETA."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Download CorridorKey 2.0 Weights (~5 GB)")
+        self.resize(580, 370)
+        self.setStyleSheet("background-color: #16161A; color: #FFFFFF;")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(8)
+
+        title_lbl = QLabel("CorridorKey 2.0 Model Setup")
+        title_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #FFFFFF;")
+        layout.addWidget(title_lbl)
+
+        sub_lbl = QLabel("Downloading weights from Hugging Face & foundation models (~5 GB total)...")
+        sub_lbl.setStyleSheet("color: #D4D4DC; font-size: 11px;")
+        layout.addWidget(sub_lbl)
+
+        layout.addSpacing(6)
+
+        self.lbl_stage = QLabel("Connecting to Hugging Face...")
+        self.lbl_stage.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self.lbl_stage.setStyleSheet("color: #38BDF8;")
+        layout.addWidget(self.lbl_stage)
+
+        # Progress bar with live percentage
+        self.pbar = QProgressBar()
+        self.pbar.setRange(0, 100)
+        self.pbar.setValue(0)
+        self.pbar.setFixedHeight(18)
+        self.pbar.setTextVisible(True)
+        self.pbar.setFormat("%p%")
+        self.pbar.setStyleSheet("""
+            QProgressBar {
+                background-color: #202026;
+                border: 1px solid #363642;
+                border-radius: 4px;
+                text-align: center;
+                color: #FFFFFF;
+                font-weight: 700;
+                font-size: 11px;
+            }
+            QProgressBar::chunk {
+                background-color: #3B82F6;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.pbar)
+
+        self.lbl_stats = QLabel("Preparing download...")
+        self.lbl_stats.setStyleSheet("color: #9A9AA6; font-size: 11px; font-family: Consolas, monospace;")
+        layout.addWidget(self.lbl_stats)
+
+        layout.addSpacing(4)
+
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setFixedHeight(120)
+        self.log_view.setStyleSheet("background-color: #121216; border: 1px solid #282832; border-radius: 5px; font-family: Consolas; font-size: 11px; color: #D4D4DC;")
+        layout.addWidget(self.log_view)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        self.btn_close = QPushButton("Cancel")
+        self.btn_close.setProperty("class", "pill-btn")
+        self.btn_close.clicked.connect(self._on_close_clicked)
+        btn_row.addWidget(self.btn_close)
+        layout.addLayout(btn_row)
+
+        self.thread = QThread()
+        self.worker = WeightDownloader()
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress_received.connect(self._on_progress)
+        self.worker.progress_updated.connect(self._on_progress_update)
+        self.worker.finished.connect(self._on_finished)
+        self.thread.start()
+
+    def _cancel_and_close(self):
+        if hasattr(self, 'worker') and self.worker is not None:
+            self.worker.stop()
+        if hasattr(self, 'thread') and self.thread is not None and self.thread.isRunning():
+            self.thread.quit()
+            self.thread.wait(1500)
+            if self.thread.isRunning():
+                self.thread.terminate()
+                self.thread.wait(500)
+
+    def _on_close_clicked(self):
+        if self.btn_close.text() == "Close":
+            self.accept()
+        else:
+            self._cancel_and_close()
+            super().reject()
+
+    def reject(self):
+        self._cancel_and_close()
+        super().reject()
+
+    def closeEvent(self, event):
+        self._cancel_and_close()
+        event.accept()
+
+    def _on_progress(self, line: str):
+        self.log_view.append(line)
+
+    def _on_progress_update(self, pct: float, stage: str, stats: str):
+        self.pbar.setValue(int(pct))
+        if stage:
+            self.lbl_stage.setText(stage)
+        if stats:
+            self.lbl_stats.setText(stats)
+
+    def _on_finished(self, success: bool, msg: str):
+        if hasattr(self, 'thread') and self.thread is not None and self.thread.isRunning():
+            self.thread.quit()
+            self.thread.wait(500)
+        self.pbar.setValue(100 if success else 0)
+        self.log_view.append(f"\nStatus: {msg}")
+        self.btn_close.setText("Close")
+        if success:
+            self.lbl_stage.setText("Download Complete!")
+            self.lbl_stage.setStyleSheet("color: #10B981;")
+            self.btn_close.setStyleSheet("background-color: #10B981; color: #FFFFFF; font-weight: bold; border-radius: 5px; padding: 6px 16px;")
+        else:
+            self.lbl_stage.setText("Download Canceled" if "canceled" in msg.lower() else "Download Error")
+            self.lbl_stage.setStyleSheet("color: #EF4444;")
+            self.btn_close.setStyleSheet("background-color: #EF4444; color: #FFFFFF; font-weight: bold; border-radius: 5px; padding: 6px 16px;")
+
+
+class MainWindow(QMainWindow):
+    """Clean Windows 11 Workbench for CorridorKey 2.0 in English with detailed Russian tooltips."""
+
+    def __init__(self):
+        super().__init__()
+        setTheme(Theme.DARK)
+        self.setWindowTitle("CorridorKey 2.0 Workbench")
+        self.resize(1400, 860)
+        self.setMinimumSize(1000, 650)
+        self.setAcceptDrops(True)
+
+        self.active_reader: Optional[VideoReader] = None
+        self.current_clip: Optional[ClipInfo] = None
+        self.render_queue: List[RenderTask] = []
+        self.queue_items_map: Dict[str, Any] = {}
+        self.active_runner: Optional[RenderRunner] = None
+        self.active_thread: Optional[QThread] = None
+
+        self._init_ui()
+        self._setup_shortcuts()
+
+        # Telemetry timer (update VRAM and disk stats every 3 seconds)
+        self.sys_timer = QTimer(self)
+        self.sys_timer.timeout.connect(self._update_system_stats)
+        self.sys_timer.start(3000)
+        self._update_system_stats()
+
+        # Check isolated layers asynchronously
+        FFmpegManager.setup_path()
+        if not FFmpegManager.is_available():
+            QTimer.singleShot(1500, self._check_ffmpeg_available)
+
+        if not EngineManager.is_engine_installed():
+            QTimer.singleShot(600, self._prompt_engine_install)
+        else:
+            QTimer.singleShot(2500, self._check_engine_updates_async)
+
+    def _init_ui(self):
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(8, 8, 8, 4)
+        main_layout.setSpacing(6)
+
+        # Main 3-Column Splitter (Left: Media, Center: Viewport, Right: Inspector)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {BG_CANVAS}; }}")
+
+        # 1. Left Column: Media & Queue Panel
+        self.media_panel = MediaPanel()
+        self.media_panel.clip_selected.connect(self._on_clip_selected)
+        self.media_panel.queue_selected_requested.connect(self._on_queue_selected_clip)
+        self.media_panel.queue_all_requested.connect(self._on_queue_all_clips)
+        self.media_panel.start_queue_requested.connect(self._process_next_in_queue)
+        splitter.addWidget(self.media_panel)
+
+        # 2. Center Column: Viewport & Timeline
+        center_card = QFrame()
+        center_card.setProperty("class", "flat-card")
+        center_card.setStyleSheet("""
+            QFrame.flat-card {
+                background-color: #16161A;
+                border: 1px solid #28282E;
+                border-radius: 8px;
+            }
+        """)
+        c_layout = QVBoxLayout(center_card)
+        c_layout.setContentsMargins(0, 0, 0, 0)
+        c_layout.setSpacing(0)
+
+        # Viewport Header Toolbar
+        vp_header = QWidget()
+        vp_header.setFixedHeight(38)
+        vp_header.setStyleSheet("background-color: #1B1B20; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom: 1px solid #28282E;")
+        vph_layout = QHBoxLayout(vp_header)
+        vph_layout.setContentsMargins(12, 0, 12, 0)
+        vph_layout.setSpacing(10)
+
+        lbl_vp_title = QLabel("Viewport")
+        lbl_vp_title.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700;")
+        lbl_vp_title.setToolTip("<b>Viewport Monitor (Окно просмотра)</b><br>Интерактивный плеер с зумом, панорамированием и шторкой сравнения.")
+        vph_layout.addWidget(lbl_vp_title)
+
+        vph_layout.addSpacing(10)
+
+        # Display Mode Segmented Buttons
+        lbl_mode = QLabel("Mode:")
+        lbl_mode.setToolTip("<b>Display Mode (Режим отображения)</b><br>Переключение между одиночным видом, шторкой Wipe и параллельным видом Side by Side.")
+        vph_layout.addWidget(lbl_mode)
+
+        self.btn_single = QPushButton("Single")
+        self.btn_single.setCheckable(True)
+        self.btn_single.setChecked(True)
+        self.btn_single.setToolTip("<b>Single Mode</b><br>Одиночный просмотр выбранного выходного канала.")
+
+        self.btn_wipe = QPushButton("Wipe")
+        self.btn_wipe.setCheckable(True)
+        self.btn_wipe.setToolTip("<b>Wipe Mode (Интерактивная шторка)</b><br>Разделение экрана вертикальной желтой линией: слева оригинал, справа обработанный кадр. Потяните линию мышкой.")
+
+        self.btn_sbs = QPushButton("Side by Side")
+        self.btn_sbs.setCheckable(True)
+        self.btn_sbs.setToolTip("<b>Side by Side Mode</b><br>Параллельный просмотр исходника и вырезанного объекта рядом.")
+
+        seg_style = f"""
+            QPushButton {{
+                background-color: #222228;
+                border: 1px solid #32323A;
+                border-radius: 4px;
+                color: #CCCCCC;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: #2A2A32;
+                border-color: #40404C;
+            }}
+            QPushButton:checked {{
+                background-color: {ACCENT_BLUE};
+                color: #FFFFFF;
+                font-weight: 700;
+                border-color: {ACCENT_BLUE};
+            }}
+        """
+        for b in (self.btn_single, self.btn_wipe, self.btn_sbs):
+            b.setStyleSheet(seg_style)
+            vph_layout.addWidget(b)
+
+        self.btn_single.clicked.connect(lambda: self._set_disp_mode("Single"))
+        self.btn_wipe.clicked.connect(lambda: self._set_disp_mode("Wipe"))
+        self.btn_sbs.clicked.connect(lambda: self._set_disp_mode("Side by side"))
+
+        vph_layout.addSpacing(10)
+
+        # Channel Selector
+        lbl_channel = QLabel("Channel:")
+        tip_channel = (
+            "<b>Channel (Канал отображения)</b><br>"
+            "• <b>Composite</b>: вырезанный объект на шахматке прозрачности.<br>"
+            "• <b>Alpha</b>: черно-белая маска (белый — объект, черный — фон).<br>"
+            "• <b>Foreground</b>: RGB изображение переднего плана.<br>"
+            "• <b>Original</b>: исходный кадр видео."
+        )
+        lbl_channel.setToolTip(tip_channel)
+        vph_layout.addWidget(lbl_channel)
+
+        self.cmb_channel = QComboBox()
+        self.cmb_channel.addItems(["Composite (Checker)", "Alpha (Matte)", "Foreground (Cutout)", "Original (Source)"])
+        self.cmb_channel.setToolTip(tip_channel)
+        self.cmb_channel.currentIndexChanged.connect(self._on_channel_changed)
+        vph_layout.addWidget(self.cmb_channel)
+
+        vph_layout.addStretch()
+
+        btn_fit = QPushButton("Fit 100%")
+        btn_fit.setProperty("class", "pill-btn")
+        btn_fit.setToolTip("<b>Fit 100% (Сбросить масштаб)</b><br>Сбросить зум и отцентрировать кадр по размеру окна (также двойной клик ЛКМ во вьюпорте).")
+        btn_fit.clicked.connect(lambda: self.viewport.reset_view())
+        vph_layout.addWidget(btn_fit)
+
+        c_layout.addWidget(vp_header)
+
+        # Viewport Canvas
+        self.viewport = ViewportWidget()
+        c_layout.addWidget(self.viewport, stretch=1)
+
+        # Timeline Scrubber Bar
+        self.timeline = TimelineWidget()
+        self.timeline.frame_changed.connect(self._on_timeline_frame_changed)
+        c_layout.addWidget(self.timeline)
+
+        splitter.addWidget(center_card)
+
+        # 3. Right Column: Inspector Panel
+        self.inspector = InspectorPanel()
+        self.inspector.render_requested.connect(self._start_render)
+        self.inspector.add_queue_requested.connect(self._add_to_queue)
+        self.inspector.download_weights_requested.connect(self._open_weight_downloader)
+        splitter.addWidget(self.inspector)
+
+        splitter.setSizes([260, 760, 380])
+        main_layout.addWidget(splitter, stretch=1)
+
+        # Native Minimal Status Bar
+        self.status_bar = QStatusBar(self)
+        self.status_bar.setFixedHeight(24)
+        self.status_bar.setStyleSheet("""
+            QStatusBar {
+                background-color: #121214;
+                color: #8E8E93;
+                border-top: 1px solid #202024;
+                font-size: 11px;
+                padding-left: 6px;
+                padding-right: 6px;
+            }
+            QStatusBar::item {
+                border: none;
+            }
+        """)
+        self.setStatusBar(self.status_bar)
+
+        self.lbl_status = QLabel("Ready")
+        self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
+        self.lbl_status.setToolTip("<b>Status (Текущий статус)</b><br>Состояние конвейера инференса CorridorKey.")
+        self.status_bar.addWidget(self.lbl_status, stretch=1)
+
+        self.lbl_vram_status = QLabel("VRAM: 0.0 / 8.0 GB")
+        self.lbl_vram_status.setStyleSheet("color: #CCCCCC; font-size: 11px; font-family: Consolas, monospace; padding-right: 12px;")
+        self.lbl_vram_status.setToolTip("<b>VRAM (Использование видеопамяти)</b><br>Используемый и общий объем памяти на видеокарте NVIDIA RTX 5070 Mobile.")
+        self.status_bar.addPermanentWidget(self.lbl_vram_status)
+
+        self.lbl_disk_status = QLabel("Disk: 0.0 GB Free")
+        self.lbl_disk_status.setStyleSheet("color: #CCCCCC; font-size: 11px; font-family: Consolas, monospace;")
+        self.lbl_disk_status.setToolTip("<b>Disk Space (Свободное место на диске)</b><br>Объем свободного пространства на целевом диске для записи видео.")
+        self.status_bar.addPermanentWidget(self.lbl_disk_status)
+
+        self.btn_engine_update = QPushButton("⚡ Update Engine")
+        self.btn_engine_update.setVisible(False)
+        self.btn_engine_update.setFixedHeight(18)
+        self.btn_engine_update.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_engine_update.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                font-size: 10px;
+                font-weight: 700;
+                border: 1px solid #3B82F6;
+                border-radius: 3px;
+                padding: 1px 6px;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+        """)
+        self.btn_engine_update.clicked.connect(self._on_update_engine)
+        self.status_bar.addPermanentWidget(self.btn_engine_update)
+
+    def _check_ffmpeg_available(self):
+        if not FFmpegManager.is_available():
+            reply = QMessageBox.question(
+                self,
+                "FFmpeg Missing",
+                "FFmpeg was not found in your system PATH.\n\n"
+                "Would you like to automatically download portable FFmpeg binaries into ./bin/?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.lbl_status.setText("Downloading portable FFmpeg...")
+                success = FFmpegManager.download_portable_ffmpeg()
+                if success:
+                    QMessageBox.information(self, "FFmpeg Installed", "Portable FFmpeg installed into ./bin/ successfully!")
+                    self.lbl_status.setText("Ready")
+                else:
+                    QMessageBox.warning(self, "FFmpeg Error", "Failed to download FFmpeg automatically. Please install FFmpeg manually.")
+
+    def _prompt_engine_install(self):
+        if not EngineManager.is_engine_installed():
+            reply = QMessageBox.question(
+                self,
+                "CorridorKey 2.0 Engine Required",
+                "The core CorridorKey 2.0 engine was not found in ./engine/.\n\n"
+                "Would you like to download/clone the engine from GitHub now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.lbl_status.setText("Installing CorridorKey engine...")
+                success = EngineManager.install_or_update_engine()
+                if success:
+                    QMessageBox.information(self, "Engine Installed", "CorridorKey 2.0 engine installed successfully!")
+                    self.lbl_status.setText("Ready")
+                else:
+                    QMessageBox.warning(self, "Installation Failed", "Could not install engine. Check your network connection.")
+
+    def _check_engine_updates_async(self):
+        class UpdateChecker(QThread):
+            update_found = Signal(str, str)
+            def run(self):
+                info = EngineManager.check_for_updates()
+                if info:
+                    self.update_found.emit(info[0], info[1])
+
+        self._update_thread = UpdateChecker(self)
+        self._update_thread.update_found.connect(self._on_engine_update_found)
+        self._update_thread.start()
+
+    def _on_engine_update_found(self, commit_hash: str, msg: str):
+        self.btn_engine_update.setText(f"⚡ Update Engine ({commit_hash})")
+        self.btn_engine_update.setToolTip(f"New CorridorKey commit: {commit_hash}\n{msg}\nClick to pull update.")
+        self.btn_engine_update.setVisible(True)
+
+    def _on_update_engine(self):
+        reply = QMessageBox.question(
+            self,
+            "Update CorridorKey Engine",
+            "A newer commit of CorridorKey 2.0 is available on GitHub.\nWould you like to pull the latest changes into ./engine/?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.lbl_status.setText("Updating engine...")
+            success = EngineManager.install_or_update_engine()
+            if success:
+                QMessageBox.information(self, "Engine Updated", "CorridorKey 2.0 engine has been updated successfully!")
+                self.btn_engine_update.setVisible(False)
+                self.lbl_status.setText("Ready")
+            else:
+                QMessageBox.warning(self, "Update Failed", "Could not update engine automatically. Check your git configuration or network.")
+
+    def _setup_shortcuts(self):
+        QShortcut(QKeySequence(Qt.Key.Key_Space), self, self.timeline.toggle_play)
+        QShortcut(QKeySequence(Qt.Key.Key_Left), self, self.timeline.prev_frame)
+        QShortcut(QKeySequence(Qt.Key.Key_Right), self, self.timeline.next_frame)
+        QShortcut(QKeySequence(Qt.Key.Key_Home), self, self.timeline.go_to_first)
+        QShortcut(QKeySequence(Qt.Key.Key_End), self, self.timeline.go_to_last)
+        QShortcut(QKeySequence.StandardKey.Open, self, self.media_panel._on_import_file)
+        QShortcut(QKeySequence("Ctrl+Shift+O"), self, self.media_panel._on_import_folder)
+        QShortcut(QKeySequence("Ctrl+R"), self, self._on_shortcut_render)
+
+    def _on_shortcut_render(self):
+        task = self.inspector.get_render_task()
+        if task:
+            self._start_render(task)
+        else:
+            QMessageBox.warning(self, "No Clip Selected", "Please import or select a clip to render.")
+
+    def _set_disp_mode(self, mode: str):
+        self.btn_single.setChecked(mode == "Single")
+        self.btn_wipe.setChecked(mode == "Wipe")
+        self.btn_sbs.setChecked(mode == "Side by side")
+        self.viewport.set_display_mode(mode)
+
+    def _on_channel_changed(self, idx: int):
+        channels = ["Composite", "Alpha", "Foreground", "Original"]
+        self.viewport.set_channel_mode(channels[idx])
+
+    def _on_clip_selected(self, clip: ClipInfo):
+        self.current_clip = clip
+
+        if self.active_reader is not None:
+            self.active_reader.close()
+
+        self.active_reader = VideoReader(clip)
+        self.active_reader.open()
+
+        self.timeline.set_clip(clip.total_frames, clip.fps)
+        self.inspector.set_clip(clip)
+
+        frame_0 = self.active_reader.get_frame(0)
+        
+        # Load companion hint mask if available
+        hint_mask = None
+        if clip.discovered_hint_path and os.path.exists(clip.discovered_hint_path):
+            ext = Path(clip.discovered_hint_path).suffix.lower()
+            if ext in {".png", ".jpg", ".jpeg", ".exr"}:
+                import cv2
+                hint_mask = cv2.imread(clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
+
+        self.viewport.set_frames(frame_0, alpha_matte=hint_mask, original_rgb=frame_0)
+        self.viewport.reset_view()
+
+    def _on_timeline_frame_changed(self, frame_idx: int):
+        if self.active_reader is not None:
+            rgb = self.active_reader.get_frame(frame_idx)
+            if rgb is not None:
+                hint_mask = None
+                if self.current_clip and self.current_clip.discovered_hint_path and os.path.exists(self.current_clip.discovered_hint_path):
+                    ext = Path(self.current_clip.discovered_hint_path).suffix.lower()
+                    if ext in {".png", ".jpg", ".jpeg", ".exr"}:
+                        import cv2
+                        hint_mask = cv2.imread(self.current_clip.discovered_hint_path, cv2.IMREAD_GRAYSCALE)
+                self.viewport.set_frames(rgb, alpha_matte=hint_mask, original_rgb=rgb)
+
+    def _update_system_stats(self):
+        gpu = get_gpu_info()
+        disk_gb = get_disk_free_gb()
+        if gpu.get("available"):
+            used = gpu.get("used_gb", 0.0)
+            total = gpu.get("total_gb", 8.0)
+            self.lbl_vram_status.setText(f"VRAM: {used:.1f} / {total:.1f} GB")
+        else:
+            self.lbl_vram_status.setText("CPU Only")
+
+        self.lbl_disk_status.setText(f"Disk: {disk_gb:.1f} GB Free")
+
+    def _open_weight_downloader(self):
+        dlg = WeightDownloadDialog(self)
+        dlg.exec()
+        self.inspector._check_weights_exist()
+
+    def _on_queue_selected_clip(self, clip: ClipInfo):
+        task = self.inspector.get_render_task(clip)
+        if task:
+            self._add_to_queue(task)
+
+    def _on_queue_all_clips(self, clips: List[ClipInfo]):
+        count = 0
+        for clip in clips:
+            task = self.inspector.get_render_task(clip)
+            if task:
+                self._add_to_queue(task)
+                count += 1
+        self.lbl_status.setText(f"In Queue: {len(self.render_queue)} clips")
+
+    def _add_to_queue(self, task: RenderTask):
+        self.render_queue.append(task)
+        item = self.media_panel.add_queue_item(task.task_id, task.clip_name, "Queued")
+        self.queue_items_map[task.task_id] = item
+        self.lbl_status.setText(f"In Queue: {len(self.render_queue)} tasks")
+
+    def _process_next_in_queue(self):
+        if self.active_runner is not None:
+            return
+        if not self.render_queue:
+            self.lbl_status.setText("Queue is empty")
+            return
+
+        next_task = self.render_queue.pop(0)
+        self._start_render(next_task)
+
+    def _start_render(self, task: RenderTask):
+        if self.active_runner is not None:
+            QMessageBox.warning(self, "Render Busy", "Another render process is already active.")
+            return
+
+        item = self.queue_items_map.get(task.task_id)
+        if item is None:
+            item = self.media_panel.add_queue_item(task.task_id, task.clip_name, "Rendering...")
+            self.queue_items_map[task.task_id] = item
+
+        item.status_label.setText("Rendering...")
+        item.status_label.setStyleSheet(f"color: {ACCENT_CYAN}; font-weight: 600;")
+        self.lbl_status.setText(f"Rendering: {task.clip_name}")
+        self.lbl_status.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 11px; font-weight: 600;")
+
+        self.inspector.btn_render.setEnabled(False)
+
+        self.active_thread = QThread()
+        self.active_runner = RenderRunner(task)
+        self.active_runner.moveToThread(self.active_thread)
+
+        self.active_thread.started.connect(self.active_runner.run)
+        self.active_runner.progress_changed.connect(
+            lambda tid, cur, tot, pct, status: self._on_render_progress(item, pct, status)
+        )
+        self.active_runner.finished.connect(
+            lambda tid, success, msg: self._on_render_finished(item, success, msg)
+        )
+
+        self.active_thread.start()
+
+    def _on_render_progress(self, queue_item, pct: float, status: str):
+        queue_item.pbar.setValue(int(pct))
+        queue_item.status_label.setText(f"{pct:.0f}%")
+        self.lbl_status.setText(status)
+
+    def _on_render_finished(self, queue_item, success: bool, msg: str):
+        self.inspector.btn_render.setEnabled(True)
+
+        if success:
+            queue_item.status_label.setText("Done")
+            queue_item.status_label.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-weight: 600;")
+            queue_item.pbar.setValue(100)
+            self.lbl_status.setText("Done")
+            self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
+        else:
+            queue_item.status_label.setText("Error")
+            queue_item.status_label.setStyleSheet("color: #FF5252; font-weight: 600;")
+            self.lbl_status.setText("Render Error")
+            self.lbl_status.setStyleSheet("color: #FF5252; font-size: 11px; font-weight: 600;")
+
+        if self.active_thread is not None:
+            self.active_thread.quit()
+            self.active_thread.wait()
+            self.active_thread = None
+        self.active_runner = None
+
+        if self.render_queue:
+            self._process_next_in_queue()
+        elif success:
+            QMessageBox.information(self, "Rendering Finished", "All render tasks completed successfully!")
+
+    # Drag and Drop support
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent):
+        for url in event.mimeData().urls():
+            fpath = url.toLocalFile()
+            if fpath:
+                if os.path.isdir(fpath):
+                    single = probe_clip(fpath)
+                    if single and single.is_frame_dir:
+                        self.media_panel.add_clip(fpath)
+                    else:
+                        found = scan_directory_for_clips(fpath)
+                        if found:
+                            self.media_panel.add_clips_batch(found)
+                        elif single:
+                            self.media_panel.add_clip(fpath)
+                else:
+                    self.media_panel.add_clip(fpath)
+        event.acceptProposedAction()
+
+
+def main():
+    setTheme(Theme.DARK)
+    app = QApplication(sys.argv)
+    app.setStyleSheet(DARK_WORKBENCH_QSS)
+
+    window = MainWindow()
+    window.show()
+
+    return app.exec()
