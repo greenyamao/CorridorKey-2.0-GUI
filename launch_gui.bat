@@ -13,7 +13,13 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 if exist "venv\Scripts\python.exe" (
-    set "PYTHON=venv\Scripts\python.exe"
+    "venv\Scripts\python.exe" -c "exit(0)" >nul 2>&1
+    if !ERRORLEVEL! EQU 0 (
+        set "PYTHON=venv\Scripts\python.exe"
+    ) else (
+        echo [Warning] Detected relocated or broken local venv. Falling back to system Python.
+        set "PYTHON=python"
+    )
 ) else (
     set "PYTHON=python"
 )

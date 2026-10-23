@@ -53,10 +53,24 @@ def optimize_windows_process():
         pass
 
 
+def _has_module(name: str) -> bool:
+    """Case-insensitive check for installed module without triggering full DLL imports."""
+    candidates = [name, name.lower(), name.upper(), name.capitalize()]
+    if name.lower() == "openexr":
+        candidates.append("OpenEXR")
+    for candidate in candidates:
+        try:
+            if importlib.util.find_spec(candidate) is not None:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def ensure_environment():
-    """Fast non-blocking check using find_spec; only triggers pip if packages are truly missing."""
+    """Fast non-blocking check using find_spec; only triggers targeted pip installs if packages are missing."""
     # 1. Fast check PyTorch without slow DLL initialization
-    if importlib.util.find_spec("torch") is None:
+    if not _has_module("torch"):
         print("PyTorch is not installed. Installing PyTorch with CUDA support...")
         subprocess.check_call([
             sys.executable,
@@ -70,14 +84,27 @@ def ensure_environment():
         ])
 
     # 2. Fast check GUI and inference packages in milliseconds without importing them
-    required = ["PySide6", "qfluentwidgets", "huggingface_hub", "timm", "transformers", "einops", "utils3d", "openexr"]
-    missing = [pkg for pkg in required if importlib.util.find_spec(pkg) is None]
+    # Maps module name -> pip package name
+    required_modules = {
+        "PySide6": "PySide6",
+        "qfluentwidgets": "PySide6-Fluent-Widgets",
+        "huggingface_hub": "huggingface_hub",
+        "timm": "timm",
+        "transformers": "transformers",
+        "einops": "einops",
+        "utils3d": "utils3d",
+        "OpenEXR": "openexr",
+    }
 
-    if missing:
-        print(f"Missing required packages: {missing}. Installing requirements.txt...")
-        req_file = ROOT_DIR / "requirements.txt"
-        if req_file.is_file():
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req_file)])
+    missing_packages = [
+        pip_name
+        for mod_name, pip_name in required_modules.items()
+        if not _has_module(mod_name)
+    ]
+
+    if missing_packages:
+        print(f"Installing missing package(s): {missing_packages}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing_packages)
 
 
 if __name__ == "__main__":
