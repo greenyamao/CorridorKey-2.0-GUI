@@ -700,8 +700,10 @@ class InspectorPanel(QFrame):
         self.chk_cutout_linear = CheckBox("Cutout Straight Linear RGB (32-bit VFX)")
         self.chk_cutout_linear.setChecked(False)
         self.chk_cutout_linear.setToolTip(
-            "<b>Cutout Straight Linear RGB</b><br>"
-            "Export cutout clip in un-premultiplied straight scene-linear RGB for professional compositing in DaVinci Fusion, Nuke, or After Effects."
+            "<b>Cutout Straight Linear RGB (32-bit VFX)</b><br>"
+            "Exports un-premultiplied straight linear RGB for high-end movie compositing.<br><br>"
+            "&bull; <b>Standard video (YouTube, Premiere, CapCut):</b> <u>Leave OFF (unchecked)</u>. Turning this on causes white/dark fringes around hair in normal video editors.<br>"
+            "&bull; <b>Only for:</b> VFX compositors working in 32-bit ACES/Linear pipelines in Nuke or DaVinci Fusion."
         )
         layout.addWidget(self.chk_cutout_linear)
 
@@ -709,7 +711,9 @@ class InspectorPanel(QFrame):
         self.chk_frame_dir_linear.setChecked(False)
         self.chk_frame_dir_linear.setToolTip(
             "<b>Input EXR as Scene-Linear</b><br>"
-            "Interpret incoming OpenEXR frame sequences as scene-linear gamma instead of sRGB."
+            "Color conversion for incoming 3D CGI frame sequences.<br><br>"
+            "&bull; <b>Standard video (camera / phone footage):</b> <u>Leave OFF (unchecked)</u>. Has zero effect on MP4, MOV, or normal video.<br>"
+            "&bull; <b>Only for:</b> 3D artists importing raw linear .exr frame sequences from Blender, Maya, or Unreal Engine."
         )
         layout.addWidget(self.chk_frame_dir_linear)
 
