@@ -1055,6 +1055,8 @@ class InspectorPanel(QFrame):
             crf=12,
             preset="medium",
             pix_fmt=pix_fmt,
+            ffmpeg_threads=4,
+            stage2_batch=2,
         )
 
     def _on_render(self):

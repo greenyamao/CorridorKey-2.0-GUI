@@ -418,6 +418,7 @@ class MainWindow(QMainWindow):
         # Timeline Scrubber Bar
         self.timeline = TimelineWidget()
         self.timeline.frame_changed.connect(self._on_timeline_frame_changed)
+        self.timeline.play_state_changed.connect(self.viewport.set_playing)
         c_layout.addWidget(self.timeline)
 
         self.splitter.addWidget(center_card)
@@ -694,19 +695,19 @@ class MainWindow(QMainWindow):
 
             if cutout_candidates or alpha_candidates or checker_candidates or fg_candidates:
                 target_dir = d
-                # Prioritize ProRes 4444 cutout MOV containing embedded RGBA
-                if cutout_candidates:
-                    found_cutout = cutout_candidates[0]
+                # Prioritize high-performance H.264 MP4 checkerboard composite for real-time viewport playback
+                if checker_candidates:
+                    found_checker = checker_candidates[0]
                 if fg_candidates:
                     found_fg = fg_candidates[0]
                 if alpha_candidates:
                     found_alpha = alpha_candidates[0]
-                if checker_candidates:
-                    found_checker = checker_candidates[0]
+                if cutout_candidates:
+                    found_cutout = cutout_candidates[0]
                 break
 
         loaded_any = False
-        target_fg = found_cutout or found_fg
+        target_fg = found_fg or found_cutout
         if target_fg and target_fg.is_file():
             if self.rendered_fg_reader is not None:
                 self.rendered_fg_reader.close()
@@ -748,31 +749,32 @@ class MainWindow(QMainWindow):
         composite_override = None
         rgba_composite = None
 
-        # 1. Master ProRes 4444 RGBA Cutout (embedded alpha + despilled RGB with async pre-buffering):
-        if self.rendered_fg_reader is not None and self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
-            rgba = self.rendered_fg_reader.get_rgba_frame(frame_idx)
-            if rgba is not None:
-                rgba_composite = rgba
-                fg_rgb = rgba[:, :, :3]
-                alpha_matte = rgba[:, :, 3]
+        # 1. Primary High-Speed Path: Baked Hardware-Accelerated MP4 Checker Composite (_checker_comp*.mp4)
+        if self.rendered_checker_reader is not None:
+            c_frame = self.rendered_checker_reader.get_frame(frame_idx)
+            if c_frame is not None:
+                composite_override = c_frame
 
         # 2. Standalone Alpha matte pass (_alpha.mp4 or EXR sequence):
-        if alpha_matte is None and self.rendered_alpha_reader is not None:
+        if self.rendered_alpha_reader is not None:
             a_frame = self.rendered_alpha_reader.get_frame(frame_idx)
             if a_frame is not None:
                 alpha_matte = a_frame[:, :, 0] if a_frame.ndim == 3 else a_frame
 
-        # 3. Standalone Foreground pass (_fg.mp4):
-        if self.rendered_fg_reader is not None and not self.rendered_fg_reader.clip.path.lower().endswith(".mov"):
-            f_frame = self.rendered_fg_reader.get_frame(frame_idx)
-            if f_frame is not None:
-                fg_rgb = f_frame
-
-        # 4. Fallback direct checker composite pass (_checker_comp*.mp4):
-        if alpha_matte is None and rgba_composite is None and self.rendered_checker_reader is not None:
-            c_frame = self.rendered_checker_reader.get_frame(frame_idx)
-            if c_frame is not None:
-                composite_override = c_frame
+        # 3. Standalone Foreground pass (_fg.mp4 or ProRes MOV fallback):
+        if self.rendered_fg_reader is not None:
+            if self.rendered_fg_reader.clip.path.lower().endswith(".mov") and composite_override is None:
+                # Use ProRes MOV only if no baked checker MP4 is available
+                rgba = self.rendered_fg_reader.get_rgba_frame(frame_idx)
+                if rgba is not None:
+                    rgba_composite = rgba
+                    fg_rgb = rgba[:, :, :3]
+                    if alpha_matte is None:
+                        alpha_matte = rgba[:, :, 3]
+            else:
+                f_frame = self.rendered_fg_reader.get_frame(frame_idx)
+                if f_frame is not None:
+                    fg_rgb = f_frame
 
         self.viewport.set_frames(
             rgb_frame=fg_rgb,

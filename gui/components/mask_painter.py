@@ -140,7 +140,7 @@ class PaintCanvas(QWidget):
             self.update()
 
     def set_brush_size(self, size: int):
-        new_size = max(4, min(size, 300))
+        new_size = max(4, min(size, 1000))
         if new_size != self.brush_size:
             self.brush_size = new_size
             self.brush_size_changed.emit(self.brush_size)
@@ -278,9 +278,11 @@ class PaintCanvas(QWidget):
         self.update()
 
     def wheelEvent(self, event: QWheelEvent):
-        # Ctrl + Wheel adjusts brush size
+        # Ctrl + Wheel adjusts brush size adaptively
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            delta = 5 if event.angleDelta().y() > 0 else -5
+            cur = self.brush_size
+            step = 2 if cur < 40 else (10 if cur < 200 else 25)
+            delta = step if event.angleDelta().y() > 0 else -step
             self.set_brush_size(self.brush_size + delta)
             return
 
@@ -309,9 +311,13 @@ class PaintCanvas(QWidget):
         elif key == Qt.Key.Key_E:
             self.set_tool("eraser")
         elif key == Qt.Key.Key_BracketLeft:
-            self.set_brush_size(self.brush_size - 5)
+            cur = self.brush_size
+            step = 2 if cur < 40 else (10 if cur < 200 else 25)
+            self.set_brush_size(self.brush_size - step)
         elif key == Qt.Key.Key_BracketRight:
-            self.set_brush_size(self.brush_size + 5)
+            cur = self.brush_size
+            step = 2 if cur < 40 else (10 if cur < 200 else 25)
+            self.set_brush_size(self.brush_size + step)
         elif key == Qt.Key.Key_Z and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
             self.undo()
         elif key == Qt.Key.Key_F:
@@ -518,14 +524,14 @@ class MaskPainterDialog(QDialog):
         tb_layout.addWidget(lbl_sz)
 
         self.slider_size = QSlider(Qt.Orientation.Horizontal)
-        self.slider_size.setRange(4, 250)
+        self.slider_size.setRange(4, 1000)
         self.slider_size.setValue(45)
-        self.slider_size.setFixedWidth(100)
+        self.slider_size.setFixedWidth(130)
         self.slider_size.setToolTip(tip_sz)
         tb_layout.addWidget(self.slider_size)
 
         self.lbl_size_val = QLabel("45 px")
-        self.lbl_size_val.setFixedWidth(40)
+        self.lbl_size_val.setFixedWidth(56)
         self.lbl_size_val.setStyleSheet("color: #FFFFFF; font-weight: 600; font-size: 11px;")
         self.lbl_size_val.setToolTip(tip_sz)
         self.slider_size.valueChanged.connect(self._on_size_changed)

@@ -66,8 +66,8 @@ class RenderTask:
     preset: str = "medium"
     pix_fmt: str = "yuv420p"
     bitrate: Optional[str] = None
-    ffmpeg_threads: int = 2
-    stage2_batch: int = 1
+    ffmpeg_threads: int = 4
+    stage2_batch: int = 2
     
     # Low VRAM tuning
     low_vram_foundation_chunk: int = 4
@@ -207,6 +207,11 @@ class RenderRunner(QThread):
             env["HF_HUB_OFFLINE"] = "1"
             env["TRANSFORMERS_OFFLINE"] = "1"
 
+            # Prevent Windows 11 Power Throttling (EcoQoS) and CPU starvation when console/window is unfocused
+            creationflags = (
+                subprocess.ABOVE_NORMAL_PRIORITY_CLASS if sys.platform == "win32" else 0
+            )
+
             self._process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -215,6 +220,7 @@ class RenderRunner(QThread):
                 bufsize=1,
                 cwd=str(root_dir / "engine" if (root_dir / "engine").is_dir() else root_dir),
                 env=env,
+                creationflags=creationflags,
             )
 
             current_stage = 0

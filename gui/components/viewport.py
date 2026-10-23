@@ -181,8 +181,21 @@ class ViewportWidget(QWidget):
             self._composite_frame = QImage(
                 comp_rgb.data, cw, ch, cw * cc, QImage.Format.Format_RGB888
             ).copy()
-            self._alpha_frame = None
-            self._fg_frame = self._composite_frame
+            if self._raw_alpha is not None and self.channel_mode == "Alpha":
+                a = self._raw_alpha
+                self._alpha_frame = QImage(
+                    a.data, a.shape[1], a.shape[0], a.shape[1], QImage.Format.Format_Grayscale8
+                ).copy()
+            else:
+                self._alpha_frame = None
+
+            if self._raw_rgb is not None and self.channel_mode == "Foreground":
+                fg = self._raw_rgb
+                self._fg_frame = QImage(
+                    fg.data, fg.shape[1], fg.shape[0], fg.shape[1] * fg.shape[2], QImage.Format.Format_RGB888
+                ).copy()
+            else:
+                self._fg_frame = self._composite_frame
             return
 
         # PATH 3: Dynamic Alpha Matte + RGB with SIMD despill
@@ -230,6 +243,11 @@ class ViewportWidget(QWidget):
         """Reset zoom and pan to fit viewport."""
         self.zoom_factor = 1.0
         self.pan_offset = QPoint(0, 0)
+        self.update()
+
+    def set_playing(self, is_playing: bool):
+        """Toggle smooth transform off during playback for 60+ FPS, on when paused for pristine inspection."""
+        self._is_playing = bool(is_playing)
         self.update()
 
     def set_channel_mode(self, mode: str):
@@ -298,7 +316,10 @@ class ViewportWidget(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        if getattr(self, "_is_playing", False):
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        else:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
         # 1. Solid canvas background
         painter.fillRect(self.rect(), QColor(BG_DARK))
