@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QFrame,
 )
-from PySide6.QtGui import QFont, QCursor, QColor, QMouseEvent
+from PySide6.QtGui import QFont, QCursor, QColor, QMouseEvent, QIntValidator
 from qfluentwidgets import (
     FluentIcon as FI,
     Theme,
@@ -144,6 +144,105 @@ class StudioDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores wheelEvent to avoid accidental changes while scrolling the panel."""
     def wheelEvent(self, event):
         event.ignore()
+
+
+class StudioNumberInput(QLineEdit):
+    """Clean, high-precision numerical input field designed for pro workbench sliders.
+    Supports keyboard arrow keys, wheel scrolling, direct typing,
+    and is immune to native QSpinBox High-DPI button clipping bugs.
+    """
+    valueChanged = Signal(int)
+
+    def __init__(self, parent=None, min_val=10, max_val=150, default_val=45, step=5):
+        super().__init__(parent)
+        self._min_val = min_val
+        self._max_val = max_val
+        self._step = step
+        self._value = default_val
+
+        self.setText(str(default_val))
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedWidth(54)
+        self.setFixedHeight(24)
+
+        validator = QIntValidator(self._min_val, self._max_val, self)
+        self.setValidator(validator)
+
+        self.setStyleSheet("""
+            QLineEdit {
+                background-color: #121216;
+                border: 1px solid #2C2C38;
+                border-radius: 4px;
+                color: #FFFFFF;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 1px 4px;
+            }
+            QLineEdit:hover {
+                border-color: #3B82F6;
+                background-color: #181820;
+            }
+            QLineEdit:focus {
+                border: 1px solid #38BDF8;
+                background-color: #181820;
+            }
+        """)
+
+        self.textEdited.connect(self._on_text_edited)
+        self.editingFinished.connect(self._on_editing_finished)
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, val: int):
+        val = max(self._min_val, min(self._max_val, int(val)))
+        if self._value != val:
+            self._value = val
+            self.setText(str(val))
+            self.valueChanged.emit(val)
+        else:
+            if self.text() != str(val):
+                self.setText(str(val))
+
+    def setRange(self, min_val: int, max_val: int):
+        self._min_val = min_val
+        self._max_val = max_val
+        self.setValidator(QIntValidator(min_val, max_val, self))
+
+    def setSingleStep(self, step: int):
+        self._step = step
+
+    def _on_text_edited(self, text: str):
+        if text.isdigit():
+            val = int(text)
+            if self._min_val <= val <= self._max_val:
+                self._value = val
+                self.valueChanged.emit(val)
+
+    def _on_editing_finished(self):
+        try:
+            val = int(self.text())
+            self.setValue(val)
+        except ValueError:
+            self.setText(str(self._value))
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self.setValue(self._value + self._step)
+        elif delta < 0:
+            self.setValue(self._value - self._step)
+        event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Up:
+            self.setValue(self._value + self._step)
+            event.accept()
+        elif event.key() == Qt.Key.Key_Down:
+            self.setValue(self._value - self._step)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
 class InspectorPanel(QFrame):
@@ -759,10 +858,7 @@ class InspectorPanel(QFrame):
         self.slider_dwa_level.setToolTip(tip_dwa_q)
         dwa_head.addWidget(self.slider_dwa_level, stretch=1)
 
-        self.spin_dwa_level = StudioSpinBox()
-        self.spin_dwa_level.setRange(10, 150)
-        self.spin_dwa_level.setValue(45)
-        self.spin_dwa_level.setFixedWidth(66)
+        self.spin_dwa_level = StudioNumberInput(min_val=10, max_val=150, default_val=45, step=5)
         self.spin_dwa_level.setToolTip(tip_dwa_q)
         dwa_head.addWidget(self.spin_dwa_level)
 
