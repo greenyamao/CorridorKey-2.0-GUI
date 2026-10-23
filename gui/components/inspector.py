@@ -622,67 +622,102 @@ class InspectorPanel(QFrame):
         tip_deliver_sec = "<b>Deliver</b><br>Output passes, video codec settings, export directory, and render dispatch."
         layout.addWidget(create_section_header("Deliver", tip_deliver_sec))
 
-        # Passes 2x2 grid
-        passes_grid = QHBoxLayout()
-        self.chk_out_cutout = CheckBox("Cutout (RGBA)")
-        self.chk_out_cutout.setChecked(True)
-        self.chk_out_cutout.setToolTip(
-            "<b>Cutout Pass (ProRes 4444 MOV)</b><br>"
-            "Master production delivery file: video with transparent alpha channel and despill applied for NLE editing."
-        )
-        passes_grid.addWidget(self.chk_out_cutout)
+        # Vertical Production Outputs
+        deliv_vbox = QVBoxLayout()
+        deliv_vbox.setSpacing(6)
 
-        self.chk_out_alpha = CheckBox("Alpha (Matte)")
-        self.chk_out_alpha.setChecked(True)
-        self.chk_out_alpha.setToolTip(
-            "<b>Alpha Matte Pass (MP4)</b><br>"
-            "Black & white silhouette matte (white is subject, black is background) for compositing and live viewport preview."
+        # 1. WebM with Alpha
+        self.chk_out_webm = CheckBox("WebM (VP9 + Alpha)")
+        self.chk_out_webm.setChecked(True)
+        self.chk_out_webm.setToolTip(
+            "<b>WebM (VP9 + Alpha)</b><br>"
+            "Compact video with transparent alpha channel for Premiere Pro, DaVinci Resolve, OBS & web.<br>"
+            "&bull; <b>Size:</b> ~50-80 MB for 4K (20x-30x smaller than ProRes 4444).<br>"
+            "&bull; <b>Recommended</b> for content creators and fast editing workflows."
         )
-        passes_grid.addWidget(self.chk_out_alpha)
-        layout.addLayout(passes_grid)
+        deliv_vbox.addWidget(self.chk_out_webm)
 
-        passes_grid2 = QHBoxLayout()
-        self.chk_out_fg = CheckBox("FG (Foreground)")
-        self.chk_out_fg.setChecked(False)
-        self.chk_out_fg.setToolTip(
-            "<b>Foreground Pass (RGB)</b><br>"
-            "Despilled RGB foreground image without alpha channel. Disabled by default to save disk space."
-        )
-        passes_grid2.addWidget(self.chk_out_fg)
-
-        self.chk_out_checker = CheckBox("Checker (Preview)")
+        # 2. Checkerboard Preview (MP4)
+        self.chk_out_checker = CheckBox("Checkerboard Preview (MP4)")
         self.chk_out_checker.setChecked(True)
         self.chk_out_checker.setToolTip(
-            "<b>Checker Preview Pass (MP4)</b><br>"
-            "Universal preview video composited over transparency checkerboard. Plays directly in Windows Media Player."
+            "<b>Checkerboard Preview (MP4)</b><br>"
+            "Super lightweight H.264 video with baked checkerboard background for instant native Windows preview.<br>"
+            "&bull; Plays smoothly at 50-60+ FPS in all video players, web browsers, and the CorridorKey Viewport."
         )
-        passes_grid2.addWidget(self.chk_out_checker)
-        layout.addLayout(passes_grid2)
+        deliv_vbox.addWidget(self.chk_out_checker)
 
-        fmt_box = QHBoxLayout()
-        fmt_box.setSpacing(6)
-        lbl_fmt = QLabel("Format:")
-        lbl_fmt.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_fmt = (
-            "<b>Output Format</b><br>"
-            "&bull; <b>MP4 Video (Universal - Windows Compatible)</b>: standard 8-bit H.264 yuv420p, plays in all Windows players (Media Player, Films & TV), web browsers, and phones.<br>"
-            "&bull; <b>MP4 Video (Studio 10-bit - High 4:4:4)</b>: studio x264 profile without gradient banding for NLE compositing (requires VLC, Premiere, DaVinci).<br>"
-            "&bull; <b>EXR Sequence (16-bit Half)</b>: VFX frame sequence for DaVinci Fusion / Nuke.<br>"
-            "&bull; <b>EXR Sequence (32-bit Float)</b>: full 32-bit float linear frames for high-end VFX."
+        # 3. B&W Alpha Matte (MP4)
+        self.chk_out_alpha = CheckBox("B&W Alpha Matte (MP4)")
+        self.chk_out_alpha.setChecked(False)
+        self.chk_out_alpha.setToolTip(
+            "<b>B&W Alpha Matte (MP4)</b><br>"
+            "Black & white silhouette video (white is subject, black is keyed out) for CapCut and editors without WebM alpha support.<br>"
+            "&bull; Use with Track Matte Key (Premiere) or Add Matte (DaVinci)."
         )
-        lbl_fmt.setToolTip(tip_fmt)
-        fmt_box.addWidget(lbl_fmt)
+        deliv_vbox.addWidget(self.chk_out_alpha)
 
-        self.cmb_format = ComboBox()
-        self.cmb_format.addItems([
-            "MP4 Video (Universal - Windows Compatible)",
-            "MP4 Video (Studio 10-bit - High 4:4:4)",
-            "EXR Sequence (16-bit Half)",
-            "EXR Sequence (32-bit Float)",
-        ])
-        self.cmb_format.setToolTip(tip_fmt)
-        fmt_box.addWidget(self.cmb_format, stretch=1)
-        layout.addLayout(fmt_box)
+        # 4. ProRes 4444 Master (MOV)
+        self.chk_out_prores = CheckBox("ProRes 4444 Master (MOV)")
+        self.chk_out_prores.setChecked(False)
+        self.chk_out_prores.setToolTip(
+            "<b>ProRes 4444 Master (MOV)</b><br>"
+            "Heavyweight 12-bit studio master file with embedded alpha channel for high-end color grading and VFX.<br>"
+            "&bull; <b>Size:</b> ~2-4 GB per minute for 4K."
+        )
+        deliv_vbox.addWidget(self.chk_out_prores)
+
+        # 5. EXR Frame Sequence row
+        exr_row = QHBoxLayout()
+        exr_row.setSpacing(6)
+
+        self.chk_out_exr = CheckBox("EXR Sequence")
+        self.chk_out_exr.setChecked(False)
+        self.chk_out_exr.setToolTip(
+            "<b>EXR Frame Sequence</b><br>"
+            "Unclamped OpenEXR image sequence for VFX compositing in Nuke, DaVinci Fusion, and Blender."
+        )
+        exr_row.addWidget(self.chk_out_exr)
+
+        self.cmb_exr_depth = ComboBox()
+        self.cmb_exr_depth.addItems(["16-bit Half", "32-bit Float"])
+        self.cmb_exr_depth.setToolTip("EXR Color Depth (16-bit Half is the industry standard).")
+        self.cmb_exr_depth.setEnabled(False)
+        self.cmb_exr_depth.setFixedWidth(95)
+        exr_row.addWidget(self.cmb_exr_depth)
+
+        self.cmb_exr_codec = ComboBox()
+        self.cmb_exr_codec.addItems(["DWAA (Lossy)", "ZIP (Lossless)"])
+        self.cmb_exr_codec.setToolTip(
+            "<b>EXR Compression Codec</b><br>"
+            "&bull; <b>DWAA (Lossy)</b>: DreamWorks Animation DCT compression (~10x smaller, visually lossless).<br>"
+            "&bull; <b>ZIP (Lossless)</b>: exact bit-for-bit mathematical preservation."
+        )
+        self.cmb_exr_codec.setEnabled(False)
+        self.cmb_exr_codec.setFixedWidth(115)
+        exr_row.addWidget(self.cmb_exr_codec)
+
+        # DWA Level SpinBox
+        self.lbl_dwa_level = QLabel("Q:")
+        self.lbl_dwa_level.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self.lbl_dwa_level.setToolTip("DWAA Compression Quality Level (lower is higher quality; 45.0 is DreamWorks standard).")
+        self.lbl_dwa_level.setEnabled(False)
+        exr_row.addWidget(self.lbl_dwa_level)
+
+        self.spin_dwa_level = StudioDoubleSpinBox()
+        self.spin_dwa_level.setRange(10.0, 150.0)
+        self.spin_dwa_level.setSingleStep(5.0)
+        self.spin_dwa_level.setValue(45.0)
+        self.spin_dwa_level.setFixedWidth(60)
+        self.spin_dwa_level.setToolTip("DWAA Compression Quality Level (lower is higher quality; 45.0 is DreamWorks standard).")
+        self.spin_dwa_level.setEnabled(False)
+        exr_row.addWidget(self.spin_dwa_level)
+
+        deliv_vbox.addLayout(exr_row)
+        layout.addLayout(deliv_vbox)
+
+        self.chk_out_exr.stateChanged.connect(self._on_exr_toggled)
+        self.cmb_exr_codec.currentTextChanged.connect(self._on_exr_codec_changed)
 
         # Output folder header: Label on left, Open & Browse on right
         out_f_head = QHBoxLayout()
@@ -928,6 +963,20 @@ class InspectorPanel(QFrame):
             self.txt_out_dir.setToolTip(d)
             self._recalc_vram()
 
+    def _on_exr_toggled(self, state: int):
+        is_on = (state != 0)
+        self.cmb_exr_depth.setEnabled(is_on)
+        self.cmb_exr_codec.setEnabled(is_on)
+        is_dwaa = self.cmb_exr_codec.currentText().startswith("DWAA")
+        self.lbl_dwa_level.setEnabled(is_on and is_dwaa)
+        self.spin_dwa_level.setEnabled(is_on and is_dwaa)
+
+    def _on_exr_codec_changed(self, text: str):
+        is_dwaa = text.startswith("DWAA")
+        is_exr_on = self.chk_out_exr.isChecked()
+        self.lbl_dwa_level.setEnabled(is_exr_on and is_dwaa)
+        self.spin_dwa_level.setEnabled(is_exr_on and is_dwaa)
+
     def _on_open_out_dir(self):
         target = self.output_dir
         if self.current_clip:
@@ -952,34 +1001,24 @@ class InspectorPanel(QFrame):
             return None
 
         outputs = []
-        if self.chk_out_cutout.isChecked():
+        if self.chk_out_webm.isChecked() or self.chk_out_prores.isChecked() or self.chk_out_exr.isChecked():
             outputs.append("cutout")
-        if self.chk_out_alpha.isChecked():
-            outputs.append("alpha")
-        if self.chk_out_fg.isChecked():
-            outputs.append("fg")
         if self.chk_out_checker.isChecked():
             outputs.append("checker")
+        if self.chk_out_alpha.isChecked():
+            outputs.append("alpha")
         if not outputs:
-            outputs = ["cutout", "alpha"]
+            outputs = ["checker"]
 
-        fmt_idx = self.cmb_format.currentIndex()
-        if fmt_idx == 0:
-            out_fmt = "video"
-            pix_fmt = "yuv420p"  # Universal standard playback in Windows Media Player & browsers
-            exr_dtype = "half"
-        elif fmt_idx == 1:
-            out_fmt = "video"
-            pix_fmt = "yuv444p10le"  # Studio 10-bit x264 without gradient banding
-            exr_dtype = "half"
-        elif fmt_idx == 2:
-            out_fmt = "exr"
-            pix_fmt = "yuv420p"
-            exr_dtype = "half"
-        else:
-            out_fmt = "exr"
-            pix_fmt = "yuv420p"
-            exr_dtype = "float"
+        exr_dtype_val = "half" if "Half" in self.cmb_exr_depth.currentText() else "float"
+        exr_codec_val = "dwaa" if "DWAA" in self.cmb_exr_codec.currentText() else "zip"
+        exr_dwa_level_val = float(self.spin_dwa_level.value())
+
+        pure_exr = self.chk_out_exr.isChecked() and not (
+            self.chk_out_webm.isChecked() or self.chk_out_prores.isChecked() or self.chk_out_checker.isChecked() or self.chk_out_alpha.isChecked()
+        )
+        out_fmt = "exr" if pure_exr else "video"
+        pix_fmt = "yuv420p"
 
         preset_idx = self.cmb_hann_preset.currentIndex()
         auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
@@ -1038,6 +1077,14 @@ class InspectorPanel(QFrame):
             auto_vram=auto_vram,
             temp_dir=self.custom_temp_dir or None,
             outputs=outputs,
+            export_webm=self.chk_out_webm.isChecked(),
+            export_checker=self.chk_out_checker.isChecked(),
+            export_alpha=self.chk_out_alpha.isChecked(),
+            export_prores=self.chk_out_prores.isChecked(),
+            export_exr=self.chk_out_exr.isChecked(),
+            exr_dtype=exr_dtype_val,
+            exr_compression=exr_codec_val,
+            exr_dwa_level=exr_dwa_level_val,
             num_frames=num_frames,
             start_mode="begin",
             seed=0,
@@ -1050,7 +1097,6 @@ class InspectorPanel(QFrame):
             linear_contrast=self.spin_contrast.value(),
             linear_contrast_pivot=0.18,
             output_format=out_fmt,
-            exr_dtype=exr_dtype,
             ffmpeg_codec="libx264",
             crf=12,
             preset="medium",
@@ -1094,11 +1140,14 @@ class InspectorPanel(QFrame):
         settings.endGroup()
 
         settings.beginGroup("Deliver")
-        settings.setValue("out_cutout", self.chk_out_cutout.isChecked())
-        settings.setValue("out_alpha", self.chk_out_alpha.isChecked())
-        settings.setValue("out_fg", self.chk_out_fg.isChecked())
+        settings.setValue("out_webm", self.chk_out_webm.isChecked())
         settings.setValue("out_checker", self.chk_out_checker.isChecked())
-        settings.setValue("format", self.cmb_format.currentIndex())
+        settings.setValue("out_alpha", self.chk_out_alpha.isChecked())
+        settings.setValue("out_prores", self.chk_out_prores.isChecked())
+        settings.setValue("out_exr", self.chk_out_exr.isChecked())
+        settings.setValue("exr_depth", self.cmb_exr_depth.currentIndex())
+        settings.setValue("exr_codec", self.cmb_exr_codec.currentIndex())
+        settings.setValue("exr_dwa_level", self.spin_dwa_level.value())
         settings.setValue("output_dir", self.output_dir)
         settings.setValue("sound_on_finish", self.chk_sound_on_finish.isChecked())
         settings.setValue("versioned_sets", self.chk_versioned_sets.isChecked())
@@ -1145,16 +1194,25 @@ class InspectorPanel(QFrame):
         settings.endGroup()
 
         settings.beginGroup("Deliver")
-        if settings.contains("out_cutout"):
-            self.chk_out_cutout.setChecked(settings.value("out_cutout", True, type=bool))
-        if settings.contains("out_alpha"):
-            self.chk_out_alpha.setChecked(settings.value("out_alpha", True, type=bool))
-        if settings.contains("out_fg"):
-            self.chk_out_fg.setChecked(settings.value("out_fg", False, type=bool))
+        if settings.contains("out_webm"):
+            self.chk_out_webm.setChecked(settings.value("out_webm", True, type=bool))
         if settings.contains("out_checker"):
             self.chk_out_checker.setChecked(settings.value("out_checker", True, type=bool))
-        if settings.contains("format"):
-            self.cmb_format.setCurrentIndex(int(settings.value("format", 0)))
+        if settings.contains("out_alpha"):
+            self.chk_out_alpha.setChecked(settings.value("out_alpha", False, type=bool))
+        if settings.contains("out_prores"):
+            self.chk_out_prores.setChecked(settings.value("out_prores", False, type=bool))
+        if settings.contains("out_exr"):
+            is_exr = settings.value("out_exr", False, type=bool)
+            self.chk_out_exr.setChecked(is_exr)
+            self._on_exr_toggled(1 if is_exr else 0)
+        if settings.contains("exr_depth"):
+            self.cmb_exr_depth.setCurrentIndex(int(settings.value("exr_depth", 0)))
+        if settings.contains("exr_codec"):
+            self.cmb_exr_codec.setCurrentIndex(int(settings.value("exr_codec", 0)))
+            self._on_exr_codec_changed(self.cmb_exr_codec.currentText())
+        if settings.contains("exr_dwa_level"):
+            self.spin_dwa_level.setValue(float(settings.value("exr_dwa_level", 45.0)))
         if settings.contains("output_dir"):
             saved_dir = str(settings.value("output_dir"))
             if saved_dir and os.path.isdir(saved_dir):

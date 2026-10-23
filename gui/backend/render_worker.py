@@ -40,7 +40,15 @@ class RenderTask:
     temp_dir: Optional[str] = None
     
     # Outputs Selection: alpha, fg, cutout, checker
-    outputs: List[str] = field(default_factory=lambda: ["alpha", "fg", "cutout", "checker"])
+    outputs: List[str] = field(default_factory=lambda: ["cutout", "checker"])
+    export_webm: bool = True
+    export_checker: bool = True
+    export_alpha: bool = False
+    export_prores: bool = False
+    export_exr: bool = False
+    exr_dtype: str = "half"  # "half" | "float"
+    exr_compression: str = "dwaa"  # "dwaa" | "zip"
+    exr_dwa_level: float = 45.0
     
     # Frame sampling & limits
     num_frames: int = -1
@@ -141,6 +149,8 @@ class RenderRunner(QThread):
             "--frame_dir_fps", str(self.task.frame_dir_fps),
             "--output_format", self.task.output_format,
             "--exr_dtype", self.task.exr_dtype,
+            "--exr_compression", self.task.exr_compression,
+            "--exr_dwa_level", str(self.task.exr_dwa_level),
             "--ffmpeg_bin", self.task.ffmpeg_bin,
             "--ffmpeg_codec", self.task.ffmpeg_codec,
             "--crf", str(self.task.crf),
@@ -351,6 +361,35 @@ class RenderRunner(QThread):
             if self._is_cancelled:
                 self.finished_signal.emit(self.task.task_id, False, "Render cancelled by user.")
             elif return_code == 0:
+                clip_stem = Path(self.task.clip_path).stem
+                out_dir = Path(self.task.output_dir)
+                cutout_mov = out_dir / f"{clip_stem}_cutout.mov"
+                webm_path = out_dir / f"{clip_stem}_cutout.webm"
+
+                # 1. Post-process WebM (VP9 with Alpha) if requested
+                if self.task.export_webm and cutout_mov.is_file():
+                    self.progress_changed.emit(
+                        self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
+                        "Encoding WebM (VP9 + Alpha)..."
+                    )
+                    cmd_webm = [
+                        "ffmpeg", "-y", "-i", str(cutout_mov),
+                        "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
+                        "-b:v", "0", "-crf", "26",
+                        "-row-mt", "1", "-threads", "4",
+                        str(webm_path)
+                    ]
+                    try:
+                        subprocess.run(cmd_webm, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        # If user did NOT check ProRes 4444, delete the heavy temp MOV!
+                        if not self.task.export_prores and webm_path.is_file() and webm_path.stat().st_size > 0:
+                            try:
+                                cutout_mov.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        self.log_received.emit(self.task.task_id, f"[Warning] WebM encoding failed: {e}\n")
+
                 self.progress_changed.emit(
                     self.task.task_id, self.task.total_frames, self.task.total_frames, 100.0, "Completed!"
                 )

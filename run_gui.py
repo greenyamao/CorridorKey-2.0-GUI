@@ -70,7 +70,7 @@ def ensure_environment():
         ])
 
     # 2. Fast check GUI and inference packages in milliseconds without importing them
-    required = ["PySide6", "qfluentwidgets", "huggingface_hub", "timm", "transformers", "einops", "utils3d"]
+    required = ["PySide6", "qfluentwidgets", "huggingface_hub", "timm", "transformers", "einops", "utils3d", "openexr"]
     missing = [pkg for pkg in required if importlib.util.find_spec(pkg) is None]
 
     if missing:
