@@ -123,11 +123,19 @@ QPushButton:disabled {{
 }}
 
 /* Flat Inputs */
-QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {{
+QComboBox, QLineEdit {{
     background-color: {INPUT_BG};
     border: 1px solid {BORDER_SUBTLE};
     border-radius: 4px;
     padding: 4px 8px;
+    color: #FFFFFF;
+    min-height: 20px;
+}}
+QSpinBox, QDoubleSpinBox {{
+    background-color: {INPUT_BG};
+    border: 1px solid {BORDER_SUBTLE};
+    border-radius: 4px;
+    padding: 2px 2px 2px 6px;
     color: #FFFFFF;
     min-height: 20px;
 }}

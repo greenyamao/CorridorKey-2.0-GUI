@@ -577,7 +577,7 @@ class InspectorPanel(QFrame):
         self.spin_brightness.setRange(0.0, 5.0)
         self.spin_brightness.setSingleStep(0.05)
         self.spin_brightness.setValue(1.0)
-        self.spin_brightness.setFixedWidth(58)
+        self.spin_brightness.setFixedWidth(64)
         self.spin_brightness.setToolTip(tip_bc)
         bc_layout.addWidget(self.spin_brightness)
 
@@ -592,7 +592,7 @@ class InspectorPanel(QFrame):
         self.spin_contrast.setRange(0.0, 5.0)
         self.spin_contrast.setSingleStep(0.05)
         self.spin_contrast.setValue(1.0)
-        self.spin_contrast.setFixedWidth(58)
+        self.spin_contrast.setFixedWidth(64)
         self.spin_contrast.setToolTip(tip_bc)
         bc_layout.addWidget(self.spin_contrast)
         layout.addLayout(bc_layout)
@@ -731,39 +731,50 @@ class InspectorPanel(QFrame):
         codec_row.addWidget(self.cmb_exr_codec, stretch=1)
         exr_card_layout.addLayout(codec_row)
 
-        # Row 3: DWAA Compression Quality Level (only visible for DWAA)
+        # Row 3: DWAA Compression Quality Level (Slider + SpinBox)
         self.dwa_level_widget = QWidget()
-        dwa_layout = QHBoxLayout(self.dwa_level_widget)
-        dwa_layout.setContentsMargins(0, 0, 0, 0)
-        dwa_layout.setSpacing(8)
+        dwa_vbox = QVBoxLayout(self.dwa_level_widget)
+        dwa_vbox.setContentsMargins(0, 0, 0, 0)
+        dwa_vbox.setSpacing(4)
 
-        self.lbl_dwa_level = QLabel("Quality Level:")
+        dwa_head = QHBoxLayout()
+        dwa_head.setSpacing(8)
+
+        self.lbl_dwa_level = QLabel("Quality:")
         self.lbl_dwa_level.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
         tip_dwa_q = (
             "<b>DWAA Compression Level</b><br>"
             "Compression quality level for DWAA.<br>"
-            "&bull; <b>45.0</b>: DreamWorks studio default (visually lossless, ~7x-10x compression).<br>"
-            "&bull; <b>Lower value</b> (e.g. 20-30): higher visual quality, larger file size.<br>"
-            "&bull; <b>Higher value</b> (e.g. 80-100): smaller file size, more aggressive compression."
+            "&bull; <b>45</b>: DreamWorks studio default (visually lossless, ~7x-10x compression).<br>"
+            "&bull; <b>Lower value</b> (e.g. 10-30): higher visual quality, larger file size.<br>"
+            "&bull; <b>Higher value</b> (e.g. 80-120): smaller file size, more aggressive compression."
         )
         self.lbl_dwa_level.setToolTip(tip_dwa_q)
-        self.lbl_dwa_level.setFixedWidth(85)
-        dwa_layout.addWidget(self.lbl_dwa_level)
+        self.lbl_dwa_level.setFixedWidth(50)
+        dwa_head.addWidget(self.lbl_dwa_level)
 
-        self.spin_dwa_level = StudioDoubleSpinBox()
-        self.spin_dwa_level.setDecimals(1)
-        self.spin_dwa_level.setRange(10.0, 150.0)
-        self.spin_dwa_level.setSingleStep(5.0)
-        self.spin_dwa_level.setValue(45.0)
-        self.spin_dwa_level.setFixedWidth(75)
+        self.slider_dwa_level = StudioSlider(Qt.Orientation.Horizontal)
+        self.slider_dwa_level.setRange(10, 150)
+        self.slider_dwa_level.setValue(45)
+        self.slider_dwa_level.setToolTip(tip_dwa_q)
+        dwa_head.addWidget(self.slider_dwa_level, stretch=1)
+
+        self.spin_dwa_level = StudioSpinBox()
+        self.spin_dwa_level.setRange(10, 150)
+        self.spin_dwa_level.setValue(45)
+        self.spin_dwa_level.setFixedWidth(66)
         self.spin_dwa_level.setToolTip(tip_dwa_q)
-        dwa_layout.addWidget(self.spin_dwa_level)
+        dwa_head.addWidget(self.spin_dwa_level)
 
-        lbl_dwa_hint = QLabel("(45.0 = studio default)")
-        lbl_dwa_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        self.slider_dwa_level.valueChanged.connect(self.spin_dwa_level.setValue)
+        self.spin_dwa_level.valueChanged.connect(self.slider_dwa_level.setValue)
+
+        dwa_vbox.addLayout(dwa_head)
+
+        lbl_dwa_hint = QLabel("(45 = studio default · lower = higher quality)")
+        lbl_dwa_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; padding-left: 58px;")
         lbl_dwa_hint.setToolTip(tip_dwa_q)
-        dwa_layout.addWidget(lbl_dwa_hint)
-        dwa_layout.addStretch()
+        dwa_vbox.addWidget(lbl_dwa_hint)
 
         exr_card_layout.addWidget(self.dwa_level_widget)
 
@@ -774,42 +785,11 @@ class InspectorPanel(QFrame):
         self.chk_out_exr.stateChanged.connect(self._on_exr_toggled)
         self.cmb_exr_codec.currentTextChanged.connect(self._on_exr_codec_changed)
 
-        # Output folder header: Label on left, Open & Browse on right
-        out_f_head = QHBoxLayout()
-        out_f_head.setSpacing(6)
-        lbl_out = QLabel("Output Folder:")
-        lbl_out.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        tip_out = "<b>Output Folder</b><br>Target directory where render sets will be saved."
-        lbl_out.setToolTip(tip_out)
-        out_f_head.addWidget(lbl_out)
-        out_f_head.addStretch()
+        layout.addWidget(create_separator())
 
-        btn_open_out = QPushButton("Open")
-        btn_open_out.setIcon(FI.FOLDER.icon(Theme.DARK))
-        btn_open_out.setIconSize(QSize(12, 12))
-        btn_open_out.setProperty("class", "pill-btn")
-        btn_open_out.setFixedHeight(22)
-        btn_open_out.setToolTip("Open output directory in Windows Explorer")
-        btn_open_out.clicked.connect(self._on_open_out_dir)
-        out_f_head.addWidget(btn_open_out)
-
-        btn_out_dir = QPushButton("Browse...")
-        btn_out_dir.setIcon(FI.FOLDER.icon(Theme.DARK))
-        btn_out_dir.setIconSize(QSize(12, 12))
-        btn_out_dir.setProperty("class", "pill-btn")
-        btn_out_dir.setFixedHeight(22)
-        btn_out_dir.setToolTip("Select destination folder for exported renders")
-        btn_out_dir.clicked.connect(self._on_choose_out_dir)
-        out_f_head.addWidget(btn_out_dir)
-        layout.addLayout(out_f_head)
-
-        # Full-width output directory display
-        self.txt_out_dir = QLineEdit(self.output_dir)
-        self.txt_out_dir.setReadOnly(True)
-        self.txt_out_dir.setToolTip(self.output_dir)
-        self.txt_out_dir.setStyleSheet("background-color: #1A1A20; border: 1px solid #282830; border-radius: 4px; padding: 2px 6px; color: #94A3B8; font-size: 11px;")
-        self.lbl_out_dir = self.txt_out_dir
-        layout.addWidget(self.txt_out_dir)
+        # Render Options Sub-block
+        opts_vbox = QVBoxLayout()
+        opts_vbox.setSpacing(6)
 
         # Frame limit test row
         limit_box = QHBoxLayout()
@@ -829,24 +809,96 @@ class InspectorPanel(QFrame):
         self.chk_limit_frames.stateChanged.connect(lambda s: self.spin_num_frames.setEnabled(bool(s)))
         limit_box.addWidget(self.spin_num_frames)
         limit_box.addStretch()
-        layout.addLayout(limit_box)
+        opts_vbox.addLayout(limit_box)
+
+        # Notification & Versioning controls
+        self.chk_versioned_sets = CheckBox("Versioned output sets (set_01, set_02...)")
+        self.chk_versioned_sets.setChecked(False)
+        self.chk_versioned_sets.setToolTip("<b>Versioned Sets</b><br>When enabled, every new render is saved into a new subfolder (set_01, set_02...). When disabled, renders save directly to the clip directory, overwriting previous files.")
+        opts_vbox.addWidget(self.chk_versioned_sets)
+
+        self.chk_sound_on_finish = CheckBox("Play notification sound on completion")
+        self.chk_sound_on_finish.setChecked(True)
+        self.chk_sound_on_finish.setToolTip("<b>Completion Sound</b><br>Play a soft, gentle Windows notification chime when rendering finishes.")
+        opts_vbox.addWidget(self.chk_sound_on_finish)
+
+        layout.addLayout(opts_vbox)
+
+        layout.addWidget(create_separator())
+
+        # Output / Destination Folder Card (Placed at the bottom before Actions)
+        dest_card = QFrame()
+        dest_card.setObjectName("destCard")
+        dest_card.setStyleSheet(f"""
+            QFrame#destCard {{
+                background-color: #16161A;
+                border: 1px solid #282832;
+                border-radius: 6px;
+                padding: 6px 8px;
+            }}
+            QFrame#destCard QLabel {{
+                color: {TEXT_SECONDARY};
+                font-size: 11px;
+            }}
+        """)
+        dest_layout = QVBoxLayout(dest_card)
+        dest_layout.setContentsMargins(6, 6, 6, 6)
+        dest_layout.setSpacing(6)
+
+        dest_head = QHBoxLayout()
+        dest_head.setSpacing(6)
+        lbl_out = QLabel("Destination Folder:")
+        lbl_out.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 600; font-size: 11px;")
+        tip_out = "<b>Destination Folder</b><br>Target directory where render sets will be saved."
+        lbl_out.setToolTip(tip_out)
+        dest_head.addWidget(lbl_out)
+        dest_head.addStretch()
+
+        btn_open_out = QPushButton("Open")
+        btn_open_out.setIcon(FI.FOLDER.icon(Theme.DARK))
+        btn_open_out.setIconSize(QSize(12, 12))
+        btn_open_out.setProperty("class", "pill-btn")
+        btn_open_out.setFixedHeight(22)
+        btn_open_out.setToolTip("Open output directory in Windows Explorer")
+        btn_open_out.clicked.connect(self._on_open_out_dir)
+        dest_head.addWidget(btn_open_out)
+
+        btn_out_dir = QPushButton("Browse...")
+        btn_out_dir.setIcon(FI.DOCUMENT.icon(Theme.DARK))
+        btn_out_dir.setIconSize(QSize(12, 12))
+        btn_out_dir.setProperty("class", "pill-btn")
+        btn_out_dir.setFixedHeight(22)
+        btn_out_dir.setToolTip("Select destination folder for exported renders")
+        btn_out_dir.clicked.connect(self._on_choose_out_dir)
+        dest_head.addWidget(btn_out_dir)
+        dest_layout.addLayout(dest_head)
+
+        self.txt_out_dir = QLineEdit(self.output_dir)
+        self.txt_out_dir.setReadOnly(True)
+        self.txt_out_dir.setToolTip(self.output_dir)
+        self.txt_out_dir.setStyleSheet("""
+            QLineEdit {
+                background-color: #111114;
+                border: 1px solid #2A2A34;
+                border-radius: 4px;
+                padding: 4px 8px;
+                color: #FFFFFF;
+                font-family: 'Consolas', 'Segoe UI', monospace;
+                font-size: 11px;
+            }
+            QLineEdit:hover {
+                border-color: #3B82F6;
+            }
+        """)
+        self.lbl_out_dir = self.txt_out_dir
+        dest_layout.addWidget(self.txt_out_dir)
+        layout.addWidget(dest_card)
 
         # Calculated memory requirements
         self.lbl_vram_info = QLabel("Select a clip to estimate VRAM requirements.")
         self.lbl_vram_info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
-        self.lbl_vram_info.setToolTip("<b>VRAM Estimate</b><br>Estimated VRAM requirement calculated for clip resolution and Hann window size against your 8 GB GPU.")
+        self.lbl_vram_info.setToolTip("<b>VRAM Estimate</b><br>Estimated VRAM requirement calculated for clip resolution and Hann window size against your 8 GPU.")
         layout.addWidget(self.lbl_vram_info)
-
-        # Notification & Versioning controls
-        self.chk_sound_on_finish = CheckBox("Play notification sound on completion")
-        self.chk_sound_on_finish.setChecked(True)
-        self.chk_sound_on_finish.setToolTip("<b>Completion Sound</b><br>Play a soft, gentle Windows notification chime when rendering finishes.")
-        layout.addWidget(self.chk_sound_on_finish)
-
-        self.chk_versioned_sets = CheckBox("Versioned output sets (set_01, set_02...)")
-        self.chk_versioned_sets.setChecked(False)
-        self.chk_versioned_sets.setToolTip("<b>Versioned Sets</b><br>When enabled, every new render is saved into a new subfolder (set_01, set_02...). When disabled, renders save directly to the clip directory, overwriting previous files.")
-        layout.addWidget(self.chk_versioned_sets)
 
         # Action Buttons Row
         action_row = QHBoxLayout()
@@ -1261,7 +1313,9 @@ class InspectorPanel(QFrame):
             self.cmb_exr_codec.setCurrentIndex(int(settings.value("exr_codec", 0)))
             self._on_exr_codec_changed(self.cmb_exr_codec.currentText())
         if settings.contains("exr_dwa_level"):
-            self.spin_dwa_level.setValue(float(settings.value("exr_dwa_level", 45.0)))
+            val = int(float(settings.value("exr_dwa_level", 45)))
+            self.spin_dwa_level.setValue(val)
+            self.slider_dwa_level.setValue(val)
         if settings.contains("output_dir"):
             saved_dir = str(settings.value("output_dir"))
             if saved_dir and os.path.isdir(saved_dir):
