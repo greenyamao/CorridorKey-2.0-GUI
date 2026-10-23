@@ -667,24 +667,59 @@ class InspectorPanel(QFrame):
         )
         deliv_vbox.addWidget(self.chk_out_prores)
 
-        # 5. EXR Frame Sequence row
-        exr_row = QHBoxLayout()
-        exr_row.setSpacing(6)
-
-        self.chk_out_exr = CheckBox("EXR Sequence")
+        # 5. EXR Frame Sequence checkbox
+        self.chk_out_exr = CheckBox("EXR Sequence (.exr)")
         self.chk_out_exr.setChecked(False)
         self.chk_out_exr.setToolTip(
-            "<b>EXR Frame Sequence</b><br>"
-            "Unclamped OpenEXR image sequence for VFX compositing in Nuke, DaVinci Fusion, and Blender."
+            "<b>EXR Frame Sequence (.exr)</b><br>"
+            "Unclamped 16-bit Half or 32-bit Float OpenEXR image sequence for professional VFX compositing in Nuke, DaVinci Fusion, and Blender.<br>"
+            "&bull; <b>DWAA</b>: visually lossless DCT compression (~7x-10x smaller).<br>"
+            "&bull; <b>ZIP</b>: bit-for-bit lossless mathematical preservation."
         )
-        exr_row.addWidget(self.chk_out_exr)
+        deliv_vbox.addWidget(self.chk_out_exr)
+
+        # Dedicated sub-panel for EXR format options (indented and clean)
+        self.exr_settings_card = QFrame()
+        self.exr_settings_card.setObjectName("exrSettingsCard")
+        self.exr_settings_card.setStyleSheet(f"""
+            QFrame#exrSettingsCard {{
+                background-color: rgba(255, 255, 255, 0.02);
+                border: 1px solid #282832;
+                border-radius: 6px;
+                margin-left: 20px;
+            }}
+            QFrame#exrSettingsCard QLabel {{
+                color: {TEXT_SECONDARY};
+                font-size: 11px;
+            }}
+        """)
+        exr_card_layout = QVBoxLayout(self.exr_settings_card)
+        exr_card_layout.setContentsMargins(10, 8, 10, 8)
+        exr_card_layout.setSpacing(6)
+
+        # Row 1: Bit Depth
+        depth_row = QHBoxLayout()
+        depth_row.setSpacing(8)
+        lbl_depth = QLabel("Color Depth:")
+        lbl_depth.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        lbl_depth.setToolTip("EXR Color Depth (16-bit Half is standard; 32-bit Float is uncompressed full float precision).")
+        lbl_depth.setFixedWidth(85)
+        depth_row.addWidget(lbl_depth)
 
         self.cmb_exr_depth = ComboBox()
         self.cmb_exr_depth.addItems(["16-bit Half", "32-bit Float"])
-        self.cmb_exr_depth.setToolTip("EXR Color Depth (16-bit Half is the industry standard).")
-        self.cmb_exr_depth.setEnabled(False)
-        self.cmb_exr_depth.setFixedWidth(95)
-        exr_row.addWidget(self.cmb_exr_depth)
+        self.cmb_exr_depth.setToolTip("<b>EXR Color Depth</b><br>&bull; <b>16-bit Half</b>: VFX industry standard.<br>&bull; <b>32-bit Float</b>: uncompressed 32-bit floating point precision.")
+        depth_row.addWidget(self.cmb_exr_depth, stretch=1)
+        exr_card_layout.addLayout(depth_row)
+
+        # Row 2: Compression Codec
+        codec_row = QHBoxLayout()
+        codec_row.setSpacing(8)
+        lbl_codec = QLabel("Compression:")
+        lbl_codec.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        lbl_codec.setToolTip("Compression codec used for the OpenEXR file sequence.")
+        lbl_codec.setFixedWidth(85)
+        codec_row.addWidget(lbl_codec)
 
         self.cmb_exr_codec = ComboBox()
         self.cmb_exr_codec.addItems(["DWAA (Lossy)", "ZIP (Lossless)"])
@@ -693,27 +728,47 @@ class InspectorPanel(QFrame):
             "&bull; <b>DWAA (Lossy)</b>: DreamWorks Animation DCT compression (~10x smaller, visually lossless).<br>"
             "&bull; <b>ZIP (Lossless)</b>: exact bit-for-bit mathematical preservation."
         )
-        self.cmb_exr_codec.setEnabled(False)
-        self.cmb_exr_codec.setFixedWidth(115)
-        exr_row.addWidget(self.cmb_exr_codec)
+        codec_row.addWidget(self.cmb_exr_codec, stretch=1)
+        exr_card_layout.addLayout(codec_row)
 
-        # DWA Level SpinBox
-        self.lbl_dwa_level = QLabel("Q:")
-        self.lbl_dwa_level.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        self.lbl_dwa_level.setToolTip("DWAA Compression Quality Level (lower is higher quality; 45.0 is DreamWorks standard).")
-        self.lbl_dwa_level.setEnabled(False)
-        exr_row.addWidget(self.lbl_dwa_level)
+        # Row 3: DWAA Compression Quality Level (only visible for DWAA)
+        self.dwa_level_widget = QWidget()
+        dwa_layout = QHBoxLayout(self.dwa_level_widget)
+        dwa_layout.setContentsMargins(0, 0, 0, 0)
+        dwa_layout.setSpacing(8)
+
+        self.lbl_dwa_level = QLabel("Quality Level:")
+        self.lbl_dwa_level.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
+        tip_dwa_q = (
+            "<b>DWAA Compression Level</b><br>"
+            "Compression quality level for DWAA.<br>"
+            "&bull; <b>45.0</b>: DreamWorks studio default (visually lossless, ~7x-10x compression).<br>"
+            "&bull; <b>Lower value</b> (e.g. 20-30): higher visual quality, larger file size.<br>"
+            "&bull; <b>Higher value</b> (e.g. 80-100): smaller file size, more aggressive compression."
+        )
+        self.lbl_dwa_level.setToolTip(tip_dwa_q)
+        self.lbl_dwa_level.setFixedWidth(85)
+        dwa_layout.addWidget(self.lbl_dwa_level)
 
         self.spin_dwa_level = StudioDoubleSpinBox()
+        self.spin_dwa_level.setDecimals(1)
         self.spin_dwa_level.setRange(10.0, 150.0)
         self.spin_dwa_level.setSingleStep(5.0)
         self.spin_dwa_level.setValue(45.0)
-        self.spin_dwa_level.setFixedWidth(60)
-        self.spin_dwa_level.setToolTip("DWAA Compression Quality Level (lower is higher quality; 45.0 is DreamWorks standard).")
-        self.spin_dwa_level.setEnabled(False)
-        exr_row.addWidget(self.spin_dwa_level)
+        self.spin_dwa_level.setFixedWidth(75)
+        self.spin_dwa_level.setToolTip(tip_dwa_q)
+        dwa_layout.addWidget(self.spin_dwa_level)
 
-        deliv_vbox.addLayout(exr_row)
+        lbl_dwa_hint = QLabel("(45.0 = studio default)")
+        lbl_dwa_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        lbl_dwa_hint.setToolTip(tip_dwa_q)
+        dwa_layout.addWidget(lbl_dwa_hint)
+        dwa_layout.addStretch()
+
+        exr_card_layout.addWidget(self.dwa_level_widget)
+
+        deliv_vbox.addWidget(self.exr_settings_card)
+        self.exr_settings_card.setVisible(False)
         layout.addLayout(deliv_vbox)
 
         self.chk_out_exr.stateChanged.connect(self._on_exr_toggled)
@@ -965,17 +1020,11 @@ class InspectorPanel(QFrame):
 
     def _on_exr_toggled(self, state: int):
         is_on = (state != 0)
-        self.cmb_exr_depth.setEnabled(is_on)
-        self.cmb_exr_codec.setEnabled(is_on)
-        is_dwaa = self.cmb_exr_codec.currentText().startswith("DWAA")
-        self.lbl_dwa_level.setEnabled(is_on and is_dwaa)
-        self.spin_dwa_level.setEnabled(is_on and is_dwaa)
+        self.exr_settings_card.setVisible(is_on)
 
     def _on_exr_codec_changed(self, text: str):
         is_dwaa = text.startswith("DWAA")
-        is_exr_on = self.chk_out_exr.isChecked()
-        self.lbl_dwa_level.setEnabled(is_exr_on and is_dwaa)
-        self.spin_dwa_level.setEnabled(is_exr_on and is_dwaa)
+        self.dwa_level_widget.setVisible(is_dwaa)
 
     def _on_open_out_dir(self):
         target = self.output_dir
