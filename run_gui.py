@@ -3,6 +3,7 @@
 
 import sys
 import os
+import shutil
 import subprocess
 import importlib.util
 from pathlib import Path
@@ -13,8 +14,27 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 
+def cleanup_temp_site_packages():
+    """Silently removes leftover Windows temporary directories ('~') from pip operations."""
+    try:
+        candidates = [
+            ROOT_DIR / "python_embedded" / "Lib" / "site-packages",
+            ROOT_DIR / "venv" / "Lib" / "site-packages",
+            Path(sys.executable).parent / "Lib" / "site-packages",
+        ]
+        for sp in candidates:
+            if sp.is_dir():
+                for item in sp.iterdir():
+                    if item.name.startswith("~") and item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def configure_runtime_paths():
     """Ensures site-packages and pywin32 C-extension paths are in sys.path and Windows DLL search paths."""
+    cleanup_temp_site_packages()
+
     candidates = [
         ROOT_DIR / "python_embedded" / "Lib" / "site-packages",
         ROOT_DIR / "venv" / "Lib" / "site-packages",
@@ -173,7 +193,7 @@ def ensure_environment():
     required_modules = {
         "PySide6": "PySide6>=6.6.0",
         "qfluentwidgets": "PySide6-Fluent-Widgets>=1.6.0",
-        "cv2": "opencv-python>=4.11,<5",
+        "cv2": "opencv-python>=4.11,<=4.11.0.86",
         "numpy": "numpy>=1.26,<2",
         "huggingface_hub": "huggingface-hub>=0.36",
         "timm": "timm>=1.0",
@@ -202,6 +222,7 @@ def ensure_environment():
             "pip",
             "install",
             "--no-warn-script-location",
+            "numpy>=1.26,<2",
         ] + missing_packages)
         installed_anything = True
 
