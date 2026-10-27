@@ -477,10 +477,10 @@ class MainWindow(QMainWindow):
         for d in possible_dirs:
             if not d.is_dir():
                 continue
-            alpha_candidates = list(d.glob(f"{stem}_alpha.*")) or list(d.glob("*_alpha.*"))
-            checker_candidates = list(d.glob(f"{stem}_checker*.*")) or list(d.glob("*_checker*.*"))
-            fg_candidates = list(d.glob(f"{stem}_fg.*")) or list(d.glob("*_fg.*"))
-            cutout_candidates = list(d.glob(f"{stem}_cutout.*")) or list(d.glob("*_cutout.*"))
+            alpha_candidates = [f for f in (list(d.glob(f"{stem}_alpha.*")) or list(d.glob("*_alpha.*"))) if f.is_file()]
+            checker_candidates = [f for f in (list(d.glob(f"{stem}_checker*.*")) or list(d.glob("*_checker*.*"))) if f.is_file()]
+            fg_candidates = [f for f in (list(d.glob(f"{stem}_fg.*")) or list(d.glob("*_fg.*"))) if f.is_file()]
+            cutout_candidates = [f for f in (list(d.glob(f"{stem}_cutout.*")) or list(d.glob("*_cutout.*"))) if f.is_file()]
 
             if cutout_candidates or alpha_candidates or checker_candidates or fg_candidates:
                 target_dir = d

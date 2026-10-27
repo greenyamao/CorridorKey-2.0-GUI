@@ -370,30 +370,125 @@ class RenderRunner(QThread):
                 out_dir = Path(self.task.output_dir)
                 cutout_mov = out_dir / f"{clip_stem}_cutout.mov"
                 webm_path = out_dir / f"{clip_stem}_cutout.webm"
+                checker_mp4 = out_dir / f"{clip_stem}_checker.mp4"
+                exr_dir = out_dir / f"{clip_stem}_cutout_exr"
+                fps = self.task.frame_dir_fps or 24.0
 
-                # 1. Post-process WebM (VP9 with Alpha) if requested
-                if self.task.export_webm and cutout_mov.is_file():
-                    self.progress_changed.emit(
-                        self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
-                        "Encoding WebM (VP9 + Alpha)..."
-                    )
-                    cmd_webm = [
-                        "ffmpeg", "-y", "-i", str(cutout_mov),
-                        "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
-                        "-b:v", "0", "-crf", "26",
-                        "-row-mt", "1", "-threads", "4",
-                        str(webm_path)
-                    ]
-                    try:
-                        subprocess.run(cmd_webm, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                        # If user did NOT check ProRes 4444, delete the heavy temp MOV!
-                        if not self.task.export_prores and webm_path.is_file() and webm_path.stat().st_size > 0:
-                            try:
-                                cutout_mov.unlink(missing_ok=True)
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        self.log_received.emit(self.task.task_id, f"[Warning] WebM encoding failed: {e}\n")
+                # Case A: EXR sequence was rendered
+                if exr_dir.is_dir():
+                    exr_pattern = str(exr_dir / "cutout_%06d.exr")
+
+                    # 1. Generate lightweight Checkerboard Preview MP4 if requested
+                    if self.task.export_checker and not checker_mp4.is_file():
+                        self.progress_changed.emit(
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 96.0,
+                            "Encoding Checkerboard Preview (MP4)..."
+                        )
+                        try:
+                            import numpy as np
+                            import cv2
+                            import tempfile
+                            first_exr = next(exr_dir.glob("*.exr"), None)
+                            if first_exr:
+                                probe_img = cv2.imread(str(first_exr), cv2.IMREAD_UNCHANGED)
+                                h, w = probe_img.shape[:2] if probe_img is not None else (720, 1280)
+                            else:
+                                w, h = 1280, 720
+
+                            tile_size = max(16, min(w, h) // 30)
+                            c0 = np.array([48, 48, 48], dtype=np.uint8)
+                            c1 = np.array([28, 28, 28], dtype=np.uint8)
+                            y, x = np.ogrid[:h, :w]
+                            mask = ((x // tile_size) + (y // tile_size)) % 2 == 0
+                            bg = np.where(mask[..., None], c0, c1)
+                            bg_path = Path(tempfile.gettempdir()) / f"ck_bg_{os.getpid()}.png"
+                            cv2.imwrite(str(bg_path), bg)
+
+                            cmd_checker = [
+                                "ffmpeg", "-y",
+                                "-loop", "1", "-i", str(bg_path),
+                                "-framerate", str(fps),
+                                "-i", exr_pattern,
+                                "-filter_complex", "[0:v][1:v]overlay=shortest=1[out]",
+                                "-map", "[out]",
+                                "-c:v", "libx264",
+                                "-pix_fmt", "yuv420p",
+                                "-crf", "18",
+                                "-preset", "fast",
+                                str(checker_mp4)
+                            ]
+                            subprocess.run(cmd_checker, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                            bg_path.unlink(missing_ok=True)
+                        except Exception as e:
+                            self.log_received.emit(self.task.task_id, f"[Warning] Checker MP4 encoding failed: {e}\n")
+
+                    # 2. Generate WebM (VP9 + Alpha) from EXR if requested
+                    if self.task.export_webm and not webm_path.is_file():
+                        self.progress_changed.emit(
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
+                            "Encoding WebM (VP9 + Alpha)..."
+                        )
+                        cmd_webm = [
+                            "ffmpeg", "-y",
+                            "-framerate", str(fps),
+                            "-i", exr_pattern,
+                            "-c:v", "libvpx-vp9",
+                            "-pix_fmt", "yuva420p",
+                            "-b:v", "0",
+                            "-crf", "26",
+                            "-row-mt", "1",
+                            "-threads", "4",
+                            str(webm_path)
+                        ]
+                        try:
+                            subprocess.run(cmd_webm, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        except Exception as e:
+                            self.log_received.emit(self.task.task_id, f"[Warning] WebM encoding failed: {e}\n")
+
+                    # 3. Generate ProRes 4444 MOV from EXR if requested
+                    if self.task.export_prores and not cutout_mov.is_file():
+                        self.progress_changed.emit(
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 99.0,
+                            "Encoding ProRes 4444 (MOV)..."
+                        )
+                        cmd_prores = [
+                            "ffmpeg", "-y",
+                            "-framerate", str(fps),
+                            "-i", exr_pattern,
+                            "-c:v", "prores_ks",
+                            "-profile:v", "4",
+                            "-pix_fmt", "yuva444p10le",
+                            str(cutout_mov)
+                        ]
+                        try:
+                            subprocess.run(cmd_prores, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        except Exception as e:
+                            self.log_received.emit(self.task.task_id, f"[Warning] ProRes encoding failed: {e}\n")
+
+                # Case B: Video mode was rendered natively
+                elif cutout_mov.is_file():
+                    if self.task.export_webm and not webm_path.is_file():
+                        self.progress_changed.emit(
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
+                            "Encoding WebM (VP9 + Alpha)..."
+                        )
+                        cmd_webm = [
+                            "ffmpeg", "-y", "-i", str(cutout_mov),
+                            "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
+                            "-b:v", "0", "-crf", "26",
+                            "-row-mt", "1", "-threads", "4",
+                            str(webm_path)
+                        ]
+                        try:
+                            subprocess.run(cmd_webm, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        except Exception as e:
+                            self.log_received.emit(self.task.task_id, f"[Warning] WebM encoding failed: {e}\n")
+
+                    if not self.task.export_prores and webm_path.is_file() and webm_path.stat().st_size > 0:
+                        try:
+                            cutout_mov.unlink(missing_ok=True)
+                        except Exception:
+                            pass
 
                 self.progress_changed.emit(
                     self.task.task_id, self.task.total_frames, self.task.total_frames, 100.0, "Completed!"

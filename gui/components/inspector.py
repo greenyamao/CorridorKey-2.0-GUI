@@ -1206,21 +1206,27 @@ class InspectorPanel(QFrame):
             return None
 
         outputs = []
-        if self.chk_out_webm.isChecked() or self.chk_out_prores.isChecked() or self.chk_out_exr.isChecked():
+        is_exr = self.chk_out_exr.isChecked()
+
+        if is_exr:
             outputs.append("cutout")
-        if self.chk_out_checker.isChecked():
-            outputs.append("checker")
-        if self.chk_out_alpha.isChecked():
-            outputs.append("alpha")
-        if not outputs:
-            outputs = ["checker"]
+            if self.chk_out_alpha.isChecked():
+                outputs.append("alpha")
+            out_fmt = "exr"
+        else:
+            if self.chk_out_webm.isChecked() or self.chk_out_prores.isChecked():
+                outputs.append("cutout")
+            if self.chk_out_checker.isChecked():
+                outputs.append("checker")
+            if self.chk_out_alpha.isChecked():
+                outputs.append("alpha")
+            if not outputs:
+                outputs = ["checker"]
+            out_fmt = "video"
 
         exr_dtype_val = "half" if "Half" in self.cmb_exr_depth.currentText() else "float"
         exr_codec_val = "dwaa" if "DWAA" in self.cmb_exr_codec.currentText() else "zip"
         exr_dwa_level_val = float(self.spin_dwa_level.value())
-
-        is_exr = self.chk_out_exr.isChecked()
-        out_fmt = "exr" if is_exr else "video"
         pix_fmt = "yuv420p"
 
         preset_idx = self.cmb_hann_preset.currentIndex()
