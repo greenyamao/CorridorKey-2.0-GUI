@@ -3,6 +3,14 @@ setlocal enabledelayedexpansion
 title CorridorKey 2.0 Workbench
 cd /d "%~dp0"
 
+REM 0. Automatically sync latest GUI updates from GitHub if git is present
+if exist ".git" (
+    where git >nul 2>&1
+    if !ERRORLEVEL! EQU 0 (
+        git pull --ff-only origin main >nul 2>&1
+    )
+)
+
 set "PYTHON="
 
 REM 1. Check existing local venv
