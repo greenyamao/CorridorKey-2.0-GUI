@@ -60,9 +60,12 @@ if not defined PYTHON (
         tar -xf "python_embedded\python-embed.zip" -C "python_embedded"
         del "python_embedded\python-embed.zip" >nul 2>&1
         
-        REM Enable site-packages in embeddable python
+        REM Enable site-packages and pywin32 in embeddable python
         echo python311.zip> "python_embedded\python311._pth"
         echo .>> "python_embedded\python311._pth"
+        echo Lib\site-packages>> "python_embedded\python311._pth"
+        echo Lib\site-packages\win32>> "python_embedded\python311._pth"
+        echo Lib\site-packages\win32\lib>> "python_embedded\python311._pth"
         echo import site>> "python_embedded\python311._pth"
     )
     

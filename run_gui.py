@@ -13,6 +13,57 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 
+def configure_runtime_paths():
+    """Ensures site-packages and pywin32 C-extension paths are in sys.path and Windows DLL search paths."""
+    candidates = [
+        ROOT_DIR / "python_embedded" / "Lib" / "site-packages",
+        ROOT_DIR / "venv" / "Lib" / "site-packages",
+        Path(sys.executable).parent / "Lib" / "site-packages",
+        Path(sys.executable).parent / "site-packages",
+    ]
+    for sp in candidates:
+        if sp.is_dir():
+            sp_str = str(sp.resolve())
+            if sp_str not in sys.path:
+                sys.path.insert(1, sp_str)
+            for sub in ["win32", "win32\\lib", "pythonwin"]:
+                p = (sp / sub).resolve()
+                if p.is_dir() and str(p) not in sys.path:
+                    sys.path.insert(1, str(p))
+            sys32 = (sp / "pywin32_system32").resolve()
+            if sys32.is_dir() and hasattr(os, "add_dll_directory"):
+                try:
+                    os.add_dll_directory(str(sys32))
+                except Exception:
+                    pass
+
+    # Ensure python311._pth contains site-packages and win32 paths if running in python_embedded
+    embed_pth = ROOT_DIR / "python_embedded" / "python311._pth"
+    if embed_pth.is_file():
+        try:
+            content = embed_pth.read_text(encoding="utf-8")
+            required_lines = [
+                "Lib\\site-packages",
+                "Lib\\site-packages\\win32",
+                "Lib\\site-packages\\win32\\lib",
+                "import site",
+            ]
+            missing = [line for line in required_lines if line not in content]
+            if missing:
+                new_content = content.rstrip() + "\n" + "\n".join(missing) + "\n"
+                embed_pth.write_text(new_content, encoding="utf-8")
+        except Exception:
+            pass
+
+    try:
+        import pywin32_bootstrap
+    except Exception:
+        pass
+
+
+configure_runtime_paths()
+
+
 def optimize_windows_process():
     """Tunes Windows process scheduling, disables EcoQoS power throttling, and prevents console freezes."""
     if sys.platform != "win32":
@@ -69,6 +120,8 @@ def _has_module(name: str) -> bool:
 
 def ensure_environment():
     """Fast non-blocking check using find_spec; only triggers targeted pip installs if packages are missing."""
+    installed_anything = False
+
     # 1. Fast check PyTorch with CUDA acceleration support
     torch_needs_install = False
     if not _has_module("torch"):
@@ -89,13 +142,33 @@ def ensure_environment():
             "-m",
             "pip",
             "install",
+            "--no-warn-script-location",
             "torch",
             "torchvision",
+            "numpy>=1.26,<2",
             "--index-url",
             "https://download.pytorch.org/whl/cu128",
         ])
+        installed_anything = True
 
-    # 2. Fast check GUI and inference packages in milliseconds without importing them
+    # 2. Validate numpy < 2.0 (CorridorKey requires numpy>=1.26,<2)
+    try:
+        import numpy
+        if int(numpy.__version__.split(".")[0]) >= 2:
+            print(f"[Setup] Detected numpy {numpy.__version__}. Reverting to numpy<2 for CorridorKey compatibility...")
+            subprocess.check_call([
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-warn-script-location",
+                "numpy>=1.26,<2",
+            ])
+            installed_anything = True
+    except Exception:
+        pass
+
+    # 3. Fast check GUI and inference packages in milliseconds without importing them
     # Maps module name -> pip package name or URL
     required_modules = {
         "PySide6": "PySide6>=6.6.0",
@@ -123,11 +196,26 @@ def ensure_environment():
 
     if missing_packages:
         print(f"Installing missing package(s): {missing_packages}...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing_packages)
+        subprocess.check_call([
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-warn-script-location",
+        ] + missing_packages)
+        installed_anything = True
+
+    # 4. If packages were newly installed, restart the process once so all C-extensions and .pth hooks load natively
+    if installed_anything:
+        print("[Setup] Environment initialized. Launching CorridorKey Workbench...")
+        configure_runtime_paths()
+        res = subprocess.call([sys.executable] + sys.argv)
+        sys.exit(res)
 
 
 if __name__ == "__main__":
     optimize_windows_process()
+    configure_runtime_paths()
     ensure_environment()
     try:
         from gui.backend.logger import setup_logging
