@@ -729,32 +729,7 @@ class InspectorPanel(QFrame):
         deliv_vbox = QVBoxLayout()
         deliv_vbox.setSpacing(6)
 
-        # 1. WebM with Alpha
-        self.chk_out_webm = CheckBox("WebM (VP9 + Alpha)")
-        self.chk_out_webm.setChecked(True)
-        self.chk_out_webm.setToolTip(
-            "<b>WebM (VP9 + Alpha)</b><br>"
-            "High-quality compact video with transparent alpha channel encoded at CRF 14.<br>"
-            "&bull; <b>Visual quality:</b> Clean, smooth alpha gradients without noisy DCT block artifacts or ringing on hair and glass.<br>"
-            "&bull; <b>Size:</b> ~50-80 MB per minute (30x-40x smaller than ProRes 4444).<br>"
-            "&bull; <b>Best for:</b> OBS Studio, streaming overlays, web players, and lightweight transparent video storage."
-        )
-        deliv_vbox.addWidget(self.chk_out_webm)
-
-        # 2. CineForm MOV with Alpha
-        self.chk_out_cineform = CheckBox("CineForm (MOV + Alpha)")
-        self.chk_out_cineform.setChecked(True)
-        self.chk_out_cineform.setToolTip(
-            "<b>CineForm (MOV + Alpha)</b><br>"
-            "12-bit intermediate video with alpha channel in QuickTime MOV container.<br>"
-            "&bull; <b>Native support:</b> Opens out of the box in Adobe Premiere Pro, DaVinci Resolve, and After Effects without any plugins.<br>"
-            "&bull; <b>Wavelet compression:</b> Smooth continuous alpha edges around fine hair and transparent glass.<br>"
-            "&bull; <b>Size:</b> ~350-500 MB per minute (4x-5x lighter than ProRes 4444).<br>"
-            "&bull; <b>Recommended</b> for video editors who want clean transparency without massive 2+ GB file sizes."
-        )
-        deliv_vbox.addWidget(self.chk_out_cineform)
-
-        # 3. Checkerboard Preview (MP4)
+        # 1. Checkerboard Preview (MP4) - Top Preview
         self.chk_out_checker = CheckBox("Checkerboard Preview (MP4)")
         self.chk_out_checker.setChecked(True)
         self.chk_out_checker.setToolTip(
@@ -763,6 +738,31 @@ class InspectorPanel(QFrame):
             "&bull; Plays smoothly at 50-60+ FPS in all video players, web browsers, and the CorridorKey Viewport."
         )
         deliv_vbox.addWidget(self.chk_out_checker)
+
+        # 2. WebM with Alpha - Most Compact Transparent Format
+        self.chk_out_webm = CheckBox("WebM (VP9 + Alpha)")
+        self.chk_out_webm.setChecked(True)
+        self.chk_out_webm.setToolTip(
+            "<b>WebM (VP9 + Alpha) — Most Compact Format</b><br>"
+            "High-quality compact video with transparent alpha channel encoded at CRF 14.<br>"
+            "&bull; <b>Visual quality:</b> Clean, smooth alpha gradients without noisy DCT block artifacts or ringing on hair and glass.<br>"
+            "&bull; <b>Size:</b> ~50-80 MB per minute (30x-40x smaller than ProRes 4444).<br>"
+            "&bull; <b>Best for:</b> OBS Studio, streaming overlays, web players, and lightweight transparent video storage."
+        )
+        deliv_vbox.addWidget(self.chk_out_webm)
+
+        # 3. CineForm MOV with Alpha - Premiere / DaVinci Intermediate
+        self.chk_out_cineform = CheckBox("CineForm (MOV + Alpha)")
+        self.chk_out_cineform.setChecked(True)
+        self.chk_out_cineform.setToolTip(
+            "<b>CineForm (MOV + Alpha) — Premiere / DaVinci Intermediate</b><br>"
+            "12-bit intermediate video with alpha channel in QuickTime MOV container.<br>"
+            "&bull; <b>Native support:</b> Opens out of the box in Adobe Premiere Pro, DaVinci Resolve, and After Effects without any plugins.<br>"
+            "&bull; <b>Wavelet compression:</b> Smooth continuous alpha edges around fine hair and transparent glass.<br>"
+            "&bull; <b>Size:</b> ~350-500 MB per minute (4x-5x lighter than ProRes 4444).<br>"
+            "&bull; <b>Recommended</b> for video editors who want clean transparency without massive 2+ GB file sizes."
+        )
+        deliv_vbox.addWidget(self.chk_out_cineform)
 
         # 3. B&W Alpha Matte (MP4)
         self.chk_out_alpha = CheckBox("B&W Alpha Matte (MP4)")
