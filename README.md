@@ -16,7 +16,8 @@ Alternatively, you can run from a terminal:
 python run_gui.py
 ```
 ## Issue
-If you encounter a bug, run into an error, or have a feature request, please open an issue.
+If you encounter a bug, run into an error, or have a feature request, please [open an issue](https://github.com/greenyamao/CorridorKey-2.0-GUI/issues/new).
+
 
 ## Requirements
 
