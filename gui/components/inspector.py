@@ -1215,10 +1215,8 @@ class InspectorPanel(QFrame):
         exr_codec_val = "dwaa" if "DWAA" in self.cmb_exr_codec.currentText() else "zip"
         exr_dwa_level_val = float(self.spin_dwa_level.value())
 
-        pure_exr = self.chk_out_exr.isChecked() and not (
-            self.chk_out_webm.isChecked() or self.chk_out_prores.isChecked() or self.chk_out_checker.isChecked() or self.chk_out_alpha.isChecked()
-        )
-        out_fmt = "exr" if pure_exr else "video"
+        is_exr = self.chk_out_exr.isChecked()
+        out_fmt = "exr" if is_exr else "video"
         pix_fmt = "yuv420p"
 
         preset_idx = self.cmb_hann_preset.currentIndex()
