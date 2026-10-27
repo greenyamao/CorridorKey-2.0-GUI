@@ -63,6 +63,8 @@ def configure_runtime_paths():
         try:
             content = embed_pth.read_text(encoding="utf-8")
             required_lines = [
+                "..",
+                "..\\engine",
                 "Lib\\site-packages",
                 "Lib\\site-packages\\win32",
                 "Lib\\site-packages\\win32\\lib",

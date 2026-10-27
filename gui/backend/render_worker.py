@@ -134,9 +134,13 @@ class RenderRunner(QThread):
                 os.environ["PATH"] = bin_str + os.pathsep + cur_p
 
         # Build complete CLI arguments covering 100% of infer.py
+        engine_dir = infer_script.parent.resolve()
         cmd = [
             sys.executable,
             "-u",
+            "-c",
+            "import sys, runpy; sys.path.insert(0, sys.argv[1]); del sys.argv[0:2]; runpy.run_path(sys.argv[0], run_name='__main__')",
+            str(engine_dir),
             str(infer_script),
             "--input", self.task.clip_path,
             "--output_dir", self.task.output_dir,
@@ -216,6 +220,7 @@ class RenderRunner(QThread):
             env = os.environ.copy()
             env["HF_HUB_OFFLINE"] = "1"
             env["TRANSFORMERS_OFFLINE"] = "1"
+            env["PYTHONPATH"] = str(engine_dir) + (os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
 
             # Prevent Windows 11 Power Throttling (EcoQoS) and CPU starvation when console/window is unfocused
             creationflags = (
