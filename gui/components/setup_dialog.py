@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QDialog,
@@ -384,7 +384,8 @@ class SetupDialog(QDialog):
             self.lbl_overall_stats.setText("5.18 GB / 5.18 GB (100%)")
             self.lbl_current_stats.setText("Ready to launch Workbench.")
 
-            self.btn_action.setText("Start Workbench")
+            self.btn_action.setText("Open Workbench")
+            QTimer.singleShot(1200, self.accept)
             self.btn_action.setStyleSheet("""
                 QPushButton {
                     background-color: #10B981;
