@@ -236,10 +236,28 @@ def ensure_environment():
         sys.exit(res)
 
 
+def check_and_apply_gui_update():
+    """Silently checks for latest GUI updates from GitHub and auto-applies before launch."""
+    try:
+        from gui.managers.app_updater import AppUpdater
+        update_info = AppUpdater.check_for_update()
+        if update_info:
+            short_sha, msg = update_info
+            print(f"[AutoUpdate] New GUI update found ({short_sha}): {msg}")
+            print("[AutoUpdate] Automatically applying update to CorridorKey Workbench...")
+            if AppUpdater.update_gui():
+                print("[AutoUpdate] Update applied successfully! Restarting...")
+                res = subprocess.call([sys.executable] + sys.argv)
+                sys.exit(res)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     optimize_windows_process()
     configure_runtime_paths()
     ensure_environment()
+    check_and_apply_gui_update()
     try:
         from gui.backend.logger import setup_logging
         setup_logging()
