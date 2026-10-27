@@ -134,20 +134,35 @@ def calculate_clip_vram_estimate(
     height: int,
     frames: int,
     low_vram: bool = False,
-    hann_chunk: int = 80
-) -> Tuple[float, bool]:
+    hann_chunk: int = 80,
+    auto_vram: bool = False,
+) -> Tuple[float, bool, str]:
     """Estimate peak VRAM required for processing the given clip resolution."""
+    gpu_info = get_gpu_info()
+    total_gpu = gpu_info.get("total_gb", 8.0)
+
     if estimate_peak_vram_gb is None:
-        return (4.0, True)
-    
+        return (4.0, True, "Auto")
+
+    # When Auto VRAM is active, simulate CorridorKey runtime select_vram_profile
+    if auto_vram and select_vram_profile is not None:
+        try:
+            chunk, stride, chosen_low_vram, estimate = select_vram_profile(
+                (height, width), max(1, frames), total_gpu
+            )
+            peak_with_margin = estimate * 1.1 + 0.3
+            fits = peak_with_margin <= total_gpu
+            details = f"Auto: {chunk} frames{' (Low VRAM)' if chosen_low_vram else ''}"
+            return (round(peak_with_margin, 1), fits, details)
+        except Exception:
+            pass
+
     megapixels = (width * height) / 1e6
     try:
         estimated_peak = estimate_peak_vram_gb(megapixels, min(hann_chunk, max(1, frames)), low_vram)
-        # Apply safety margin like in runtime.py
         peak_with_margin = estimated_peak * 1.1 + 0.3
-        
-        gpu_info = get_gpu_info()
-        fits = peak_with_margin <= gpu_info.get("total_gb", 8.0)
-        return (round(peak_with_margin, 1), fits)
+        fits = peak_with_margin <= total_gpu
+        details = f"{hann_chunk} frames{' (Low VRAM)' if low_vram else ''}"
+        return (round(peak_with_margin, 1), fits, details)
     except Exception:
-        return (5.0, True)
+        return (5.0, True, "Standard")

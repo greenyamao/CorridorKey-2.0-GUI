@@ -1057,21 +1057,22 @@ class InspectorPanel(QFrame):
             self.lbl_vram_info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
             return
 
-        low_vram = self.chk_low_vram.isChecked()
         preset_idx = self.cmb_hann_preset.currentIndex()
-        if preset_idx == 0:
-            hann_chunk = 80
-        elif preset_idx == 6:
+        auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
+        low_vram = self.chk_low_vram.isChecked()
+
+        if preset_idx == 6:
             hann_chunk = self.spin_hann_chunk.value()
         else:
-            hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 40)
+            hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 48)
 
-        vram_needed, fits = calculate_clip_vram_estimate(
+        vram_needed, fits, details = calculate_clip_vram_estimate(
             self.current_clip.width,
             self.current_clip.height,
             self.current_clip.total_frames,
             low_vram=low_vram,
             hann_chunk=hann_chunk,
+            auto_vram=auto_vram,
         )
 
         gpu_info = get_gpu_info()
@@ -1085,7 +1086,10 @@ class InspectorPanel(QFrame):
         status_color = CORRIDOR_GREEN if fits else "#F87171"
         status_text = "VRAM OK" if fits else "Warning: VRAM may exceed capacity"
 
-        self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required")
+        if auto_vram:
+            self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required ({details})")
+        else:
+            self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required")
         self.lbl_vram_info.setStyleSheet(
             f"color: {status_color}; font-size: 11px; padding: 2px;"
         )
