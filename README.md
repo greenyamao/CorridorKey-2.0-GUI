@@ -15,17 +15,8 @@ Alternatively, you can run from a terminal:
 ```bash
 python run_gui.py
 ```
-
-## First Launch
-
-1. Click the yellow Download button in the top right corner to download the AI models (about 5 GB).
-2. Once the download finishes, the application is ready to use.
-
-## How to Use
-
-1. Click `+ File` on the left to add your video.
-2. Adjust keying and output settings on the right panel.
-3. Click `Render` to process your video.
+## Issue
+If you encounter a bug, run into an error, or have a feature request, please open an issue.
 
 ## Requirements
 
