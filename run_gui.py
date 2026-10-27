@@ -69,9 +69,21 @@ def _has_module(name: str) -> bool:
 
 def ensure_environment():
     """Fast non-blocking check using find_spec; only triggers targeted pip installs if packages are missing."""
-    # 1. Fast check PyTorch without slow DLL initialization
+    # 1. Fast check PyTorch with CUDA acceleration support
+    torch_needs_install = False
     if not _has_module("torch"):
-        print("PyTorch is not installed. Installing PyTorch with CUDA support...")
+        torch_needs_install = True
+    else:
+        try:
+            import torch
+            if getattr(torch.version, "cuda", None) is None:
+                print("[Warning] Installed PyTorch is CPU-only. Reinstalling with CUDA 12.8 support...")
+                torch_needs_install = True
+        except Exception:
+            torch_needs_install = True
+
+    if torch_needs_install:
+        print("Installing PyTorch with CUDA support...")
         subprocess.check_call([
             sys.executable,
             "-m",
@@ -84,16 +96,23 @@ def ensure_environment():
         ])
 
     # 2. Fast check GUI and inference packages in milliseconds without importing them
-    # Maps module name -> pip package name
+    # Maps module name -> pip package name or URL
     required_modules = {
-        "PySide6": "PySide6",
-        "qfluentwidgets": "PySide6-Fluent-Widgets",
-        "huggingface_hub": "huggingface_hub",
-        "timm": "timm",
-        "transformers": "transformers",
-        "einops": "einops",
-        "utils3d": "utils3d",
+        "PySide6": "PySide6>=6.6.0",
+        "qfluentwidgets": "PySide6-Fluent-Widgets>=1.6.0",
+        "cv2": "opencv-python>=4.11",
+        "numpy": "numpy>=1.26,<2",
+        "huggingface_hub": "huggingface-hub>=0.36",
+        "timm": "timm>=1.0",
+        "transformers": "transformers>=4.57,<5",
+        "einops": "einops>=0.8",
+        "safetensors": "safetensors>=0.6",
+        "PIL": "pillow>=11",
+        "scipy": "scipy>=1.16",
+        "tqdm": "tqdm>=4.67",
         "OpenEXR": "openexr",
+        "pynvml": "nvidia-ml-py",
+        "utils3d": "https://github.com/EasternJournalist/utils3d/archive/83bfa5bda008803f6521ce9547f94023b8afeddd.zip",
     }
 
     missing_packages = [

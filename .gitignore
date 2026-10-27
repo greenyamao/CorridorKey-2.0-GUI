@@ -42,6 +42,7 @@ __pycache__/
 .venv/
 venv/
 env/
+python_embedded/
 .pytest_cache/
 
 # IDE & Editor files

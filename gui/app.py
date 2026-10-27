@@ -47,198 +47,14 @@ from gui.components.media_panel import MediaPanel
 from gui.components.viewport import ViewportWidget
 from gui.components.timeline import TimelineWidget
 from gui.components.inspector import InspectorPanel
+from gui.components.setup_dialog import SetupDialog
 
-
-class WeightDownloadDialog(QDialog):
-    """Dialog for downloading model weights with overall and per-model live progress bars, speed, and ETA."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Download CorridorKey 2.0 Weights (~5 GB)")
-        self.resize(600, 430)
-        self.setStyleSheet("background-color: #16161A; color: #FFFFFF;")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(6)
-
-        title_lbl = QLabel("CorridorKey 2.0 Model Setup")
-        title_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        title_lbl.setStyleSheet("color: #FFFFFF;")
-        layout.addWidget(title_lbl)
-
-        sub_lbl = QLabel("Downloading weights from Hugging Face and foundation models (~4.9 GB total)...")
-        sub_lbl.setStyleSheet("color: #D4D4DC; font-size: 11px;")
-        layout.addWidget(sub_lbl)
-
-        layout.addSpacing(6)
-
-        # --- Overall Progress Section ---
-        overall_hdr = QHBoxLayout()
-        overall_title = QLabel("OVERALL PROGRESS")
-        overall_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        overall_title.setStyleSheet("color: #9A9AA6; letter-spacing: 0.5px;")
-        overall_hdr.addWidget(overall_title)
-        overall_hdr.addStretch()
-
-        self.lbl_overall_stage = QLabel("Initializing...")
-        self.lbl_overall_stage.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self.lbl_overall_stage.setStyleSheet("color: #10B981;")
-        overall_hdr.addWidget(self.lbl_overall_stage)
-        layout.addLayout(overall_hdr)
-
-        self.pbar_overall = QProgressBar()
-        self.pbar_overall.setRange(0, 100)
-        self.pbar_overall.setValue(0)
-        self.pbar_overall.setFixedHeight(16)
-        self.pbar_overall.setTextVisible(True)
-        self.pbar_overall.setFormat("%p%")
-        self.pbar_overall.setStyleSheet("""
-            QProgressBar {
-                background-color: #202026;
-                border: 1px solid #363642;
-                border-radius: 4px;
-                text-align: center;
-                color: #FFFFFF;
-                font-weight: 700;
-                font-size: 10px;
-            }
-            QProgressBar::chunk {
-                background-color: #10B981;
-                border-radius: 3px;
-            }
-        """)
-        layout.addWidget(self.pbar_overall)
-
-        self.lbl_overall_stats = QLabel("Calculating total size...")
-        self.lbl_overall_stats.setStyleSheet("color: #9A9AA6; font-size: 11px; font-family: Consolas, monospace;")
-        layout.addWidget(self.lbl_overall_stats)
-
-        layout.addSpacing(6)
-
-        # --- Current Model Section ---
-        current_hdr = QHBoxLayout()
-        current_title = QLabel("CURRENT MODEL")
-        current_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        current_title.setStyleSheet("color: #9A9AA6; letter-spacing: 0.5px;")
-        current_hdr.addWidget(current_title)
-        current_hdr.addStretch()
-
-        self.lbl_stage = QLabel("Connecting to Hugging Face...")
-        self.lbl_stage.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self.lbl_stage.setStyleSheet("color: #38BDF8;")
-        current_hdr.addWidget(self.lbl_stage)
-        layout.addLayout(current_hdr)
-
-        self.pbar = QProgressBar()
-        self.pbar.setRange(0, 100)
-        self.pbar.setValue(0)
-        self.pbar.setFixedHeight(16)
-        self.pbar.setTextVisible(True)
-        self.pbar.setFormat("%p%")
-        self.pbar.setStyleSheet("""
-            QProgressBar {
-                background-color: #202026;
-                border: 1px solid #363642;
-                border-radius: 4px;
-                text-align: center;
-                color: #FFFFFF;
-                font-weight: 700;
-                font-size: 10px;
-            }
-            QProgressBar::chunk {
-                background-color: #3B82F6;
-                border-radius: 3px;
-            }
-        """)
-        layout.addWidget(self.pbar)
-
-        self.lbl_stats = QLabel("Preparing download...")
-        self.lbl_stats.setStyleSheet("color: #9A9AA6; font-size: 11px; font-family: Consolas, monospace;")
-        layout.addWidget(self.lbl_stats)
-
-        layout.addSpacing(4)
-
-        self.log_view = QTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setFixedHeight(110)
-        self.log_view.setStyleSheet("background-color: #121216; border: 1px solid #282832; border-radius: 5px; font-family: Consolas; font-size: 11px; color: #D4D4DC;")
-        layout.addWidget(self.log_view)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        self.btn_close = QPushButton("Cancel")
-        self.btn_close.setProperty("class", "pill-btn")
-        self.btn_close.clicked.connect(self._on_close_clicked)
-        btn_row.addWidget(self.btn_close)
-        layout.addLayout(btn_row)
-
-        self.worker = WeightDownloader(parent=self)
-        self.worker.progress_received.connect(self._on_progress)
-        self.worker.progress_updated.connect(self._on_progress_update)
-        self.worker.overall_progress_updated.connect(self._on_overall_progress_update)
-        self.worker.download_finished.connect(self._on_finished)
-        self.worker.start()
-
-    def _cancel_and_close(self):
-        if hasattr(self, 'worker') and self.worker is not None:
-            self.worker.stop()
-            if self.worker.isRunning():
-                if not self.worker.wait(2000):
-                    self.worker.terminate()
-                    self.worker.wait(1000)
-
-    def _on_close_clicked(self):
-        self._cancel_and_close()
-        if self.btn_close.text() == "Close":
-            self.accept()
-        else:
-            super().reject()
-
-    def reject(self):
-        self._cancel_and_close()
-        super().reject()
-
-    def closeEvent(self, event):
-        self._cancel_and_close()
-        event.accept()
-
-    def _on_progress(self, line: str):
-        self.log_view.append(line)
-
-    def _on_progress_update(self, pct: float, stage: str, stats: str):
-        self.pbar.setValue(int(pct))
-        if stage:
-            self.lbl_stage.setText(stage)
-        if stats:
-            self.lbl_stats.setText(stats)
-
-    def _on_overall_progress_update(self, pct: float, stage_title: str, stats: str):
-        self.pbar_overall.setValue(int(pct))
-        if stage_title:
-            self.lbl_overall_stage.setText(stage_title)
-        if stats:
-            self.lbl_overall_stats.setText(stats)
-
-    def _on_finished(self, success: bool, msg: str):
-        self.pbar.setValue(100 if success else 0)
-        self.log_view.append(f"\nStatus: {msg}")
-        self.btn_close.setText("Close")
-        if success:
-            self.pbar_overall.setValue(100)
-            self.lbl_overall_stage.setText("All Models Ready (4 of 4)")
-            self.lbl_overall_stats.setText("4.88 GB / 4.88 GB (100%)")
-            self.lbl_stage.setText("Download Complete!")
-            self.lbl_stage.setStyleSheet("color: #10B981;")
-            self.btn_close.setStyleSheet("background-color: #10B981; color: #FFFFFF; font-weight: bold; border-radius: 5px; padding: 6px 16px;")
-        else:
-            self.lbl_stage.setText("Download Canceled" if "canceled" in msg.lower() else "Download Error")
-            self.lbl_stage.setStyleSheet("color: #EF4444;")
-            self.btn_close.setStyleSheet("background-color: #EF4444; color: #FFFFFF; font-weight: bold; border-radius: 5px; padding: 6px 16px;")
+# Backward compatibility alias
+WeightDownloadDialog = SetupDialog
 
 
 class MainWindow(QMainWindow):
-    """Clean Windows 11 Workbench for CorridorKey 2.0 in English with detailed Russian tooltips."""
+    """Clean Windows 11 Workbench for CorridorKey 2.0 in pure English."""
 
     def __init__(self):
         super().__init__()
@@ -273,18 +89,16 @@ class MainWindow(QMainWindow):
         self.sys_timer.start(1000)
         self._update_system_stats()
 
-        # Check isolated layers asynchronously
+        # Setup portable binary PATH
         FFmpegManager.setup_path()
-        if not FFmpegManager.is_available():
-            QTimer.singleShot(1500, self._check_ffmpeg_available)
 
-        if not EngineManager.is_engine_installed():
-            QTimer.singleShot(600, self._prompt_engine_install)
+        # Check if first-run setup is required (Engine, FFmpeg, or Weights missing)
+        if self._is_setup_needed():
+            QTimer.singleShot(150, self._launch_setup_wizard)
         else:
+            # Everything is ready! Continuous update checks run on every normal launch in the background
             QTimer.singleShot(2500, self._check_engine_updates_async)
-
-        # Check for GUI application updates
-        QTimer.singleShot(3500, self._check_gui_updates_async)
+            QTimer.singleShot(3500, self._check_gui_updates_async)
 
     def _init_ui(self):
         central_widget = QWidget()
@@ -513,51 +327,26 @@ class MainWindow(QMainWindow):
         self.btn_gui_update.clicked.connect(self._on_update_gui)
         self.status_bar.addPermanentWidget(self.btn_gui_update)
 
-    def _check_ffmpeg_available(self):
-        if not FFmpegManager.is_available():
-            reply = QMessageBox.question(
-                self,
-                "FFmpeg Missing",
-                "FFmpeg was not found in your system PATH.\n\n"
-                "Would you like to automatically download portable FFmpeg binaries into ./bin/?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                self.lbl_status.setText("Downloading portable FFmpeg...")
-                success = FFmpegManager.download_portable_ffmpeg()
-                if success:
-                    QMessageBox.information(self, "FFmpeg Installed", "Portable FFmpeg installed into ./bin/ successfully!")
-                    self.lbl_status.setText("Ready")
-                else:
-                    QMessageBox.warning(self, "FFmpeg Error", "Failed to download FFmpeg automatically. Please install FFmpeg manually.")
+    def _is_setup_needed(self) -> bool:
+        """Returns True if any required component (Engine, FFmpeg, or Weights) is missing."""
+        return not (
+            EngineManager.is_engine_installed()
+            and FFmpegManager.is_available()
+            and WeightsManager.are_all_weights_present()
+        )
 
-    def _prompt_engine_install(self):
-        if not EngineManager.is_engine_installed():
-            msg = QMessageBox(self)
-            msg.setWindowTitle("CorridorKey 2.0 Engine Setup")
-            msg.setText("The core CorridorKey 2.0 engine was not found in ./engine/.")
-            msg.setInformativeText("Would you like to download it from GitHub, or locate an existing CorridorKey folder on your disk?")
-            btn_download = msg.addButton("Download from GitHub", QMessageBox.ButtonRole.AcceptRole)
-            btn_locate = msg.addButton("Locate Existing Folder...", QMessageBox.ButtonRole.ActionRole)
-            btn_cancel = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-            msg.exec()
-
-            if msg.clickedButton() == btn_download:
-                self.lbl_status.setText("Installing CorridorKey engine...")
-                success = EngineManager.install_or_update_engine()
-                if success:
-                    QMessageBox.information(self, "Engine Installed", "CorridorKey 2.0 engine installed successfully!")
-                    self.lbl_status.setText("Ready")
-                else:
-                    QMessageBox.warning(self, "Installation Failed", "Could not install engine. Check your network connection.")
-            elif msg.clickedButton() == btn_locate:
-                folder = QFileDialog.getExistingDirectory(self, "Select Existing CorridorKey 2.0 Folder")
-                if folder:
-                    if EngineManager.link_existing_engine(folder):
-                        QMessageBox.information(self, "Engine Linked", f"Successfully linked CorridorKey engine from:\n{folder}")
-                        self.lbl_status.setText("Ready")
-                    else:
-                        QMessageBox.warning(self, "Invalid Folder", "The selected folder does not contain 'infer.py'. Please select the root CorridorKey 2.0 repository folder.")
+    def _launch_setup_wizard(self):
+        """Launches the unified setup wizard without confirmation prompts to install missing assets."""
+        dlg = SetupDialog(self)
+        if dlg.exec():
+            FFmpegManager.setup_path()
+            self.inspector._check_weights_exist()
+            self.lbl_status.setText("Ready")
+            # Trigger continuous background update checks now that engine layer is ready
+            QTimer.singleShot(1500, self._check_engine_updates_async)
+            QTimer.singleShot(2500, self._check_gui_updates_async)
+        else:
+            self.lbl_status.setText("Setup Incomplete")
 
     def _check_engine_updates_async(self):
         def _bg():
@@ -887,9 +676,10 @@ class MainWindow(QMainWindow):
         self.lbl_disk_status.setText(f"Disk: {disk_gb:.1f} GB Free")
 
     def _open_weight_downloader(self):
-        dlg = WeightDownloadDialog(self)
-        dlg.exec()
-        self.inspector._check_weights_exist()
+        dlg = SetupDialog(self)
+        if dlg.exec():
+            FFmpegManager.setup_path()
+            self.inspector._check_weights_exist()
 
     def _on_render_active_clip(self, task: RenderTask):
         if self.active_runner is not None:

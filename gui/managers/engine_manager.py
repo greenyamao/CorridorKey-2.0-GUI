@@ -182,13 +182,19 @@ class EngineManager:
         return None
 
     @classmethod
-    def install_or_update_engine(cls, progress_callback: Optional[Callable[[str], None]] = None) -> bool:
-        """Clones or updates the engine repository."""
+    def install_or_update_engine(cls, progress_callback: Optional[Callable[..., None]] = None) -> bool:
+        """Clones or updates the engine repository with flexible progress reporting."""
+        def _notify(pct: float, msg: str):
+            if progress_callback:
+                try:
+                    progress_callback(pct, msg)
+                except TypeError:
+                    progress_callback(msg)
+
         # 1. If git is installed and engine/.git exists: run git pull
         if (ENGINE_DIR / ".git").is_dir() and shutil.which("git"):
             try:
-                if progress_callback:
-                    progress_callback("Updating engine via git pull...")
+                _notify(10.0, "Updating engine via git pull...")
                 res = subprocess.run(
                     ["git", "pull", "--ff-only"],
                     cwd=str(ENGINE_DIR),
@@ -197,8 +203,7 @@ class EngineManager:
                     timeout=30
                 )
                 if res.returncode == 0:
-                    if progress_callback:
-                        progress_callback("Engine successfully updated!")
+                    _notify(100.0, "Engine successfully updated!")
                     return True
             except Exception as e:
                 print(f"[EngineManager] git pull failed: {e}")
@@ -207,8 +212,7 @@ class EngineManager:
         if not cls.is_engine_installed():
             if shutil.which("git"):
                 try:
-                    if progress_callback:
-                        progress_callback("Cloning CorridorKey 2.0 repository...")
+                    _notify(10.0, "Cloning CorridorKey 2.0 repository...")
                     ENGINE_DIR.mkdir(parents=True, exist_ok=True)
                     res = subprocess.run(
                         ["git", "clone", "--depth", "1", UPSTREAM_REPO_URL, str(ENGINE_DIR)],
@@ -217,24 +221,31 @@ class EngineManager:
                         timeout=60
                     )
                     if res.returncode == 0 and cls.is_engine_installed():
-                        if progress_callback:
-                            progress_callback("Engine successfully cloned!")
+                        _notify(100.0, "Engine successfully cloned!")
                         return True
                 except Exception as e:
                     print(f"[EngineManager] git clone failed: {e}")
 
             # 3. Fallback: download ZIP from GitHub
             try:
-                if progress_callback:
-                    progress_callback("Downloading CorridorKey 2.0 source archive...")
+                _notify(10.0, "Downloading CorridorKey 2.0 source archive...")
                 zip_path = APP_ROOT / "temp_engine.zip"
-                urllib.request.urlretrieve(UPSTREAM_ZIP_URL, zip_path)
 
-                if progress_callback:
-                    progress_callback("Extracting engine files...")
+                def _reporthook(block_num, block_size, total_size):
+                    if total_size > 0:
+                        pct = min(70.0, 10.0 + (block_num * block_size / total_size) * 60.0)
+                        dl_mb = (block_num * block_size) / (1024 * 1024)
+                        tot_mb = total_size / (1024 * 1024)
+                        _notify(pct, f"Downloading Engine: {dl_mb:.1f} / {tot_mb:.1f} MB")
+
+                urllib.request.urlretrieve(UPSTREAM_ZIP_URL, zip_path, reporthook=_reporthook)
+
+                _notify(75.0, "Extracting repository files into ./engine/...")
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     # Extracts into a subfolder like CorridorKey2.0-master/
-                    for member in zip_ref.namelist():
+                    namelist = zip_ref.namelist()
+                    tot_members = len(namelist)
+                    for i, member in enumerate(namelist):
                         parts = member.split('/', 1)
                         if len(parts) > 1 and parts[1]:
                             target_file = ENGINE_DIR / parts[1]
@@ -244,12 +255,16 @@ class EngineManager:
                                 target_file.parent.mkdir(parents=True, exist_ok=True)
                                 with zip_ref.open(member) as src, open(target_file, "wb") as dst:
                                     shutil.copyfileobj(src, dst)
+                        if i % 10 == 0 and tot_members > 0:
+                            pct = 75.0 + (i / tot_members) * 23.0
+                            _notify(pct, f"Extracting files ({i}/{tot_members})...")
 
                 try:
                     zip_path.unlink()
                 except Exception:
                     pass
 
+                _notify(100.0, "Engine extracted successfully.")
                 return cls.is_engine_installed()
             except Exception as e:
                 print(f"[EngineManager] Archive download failed: {e}")

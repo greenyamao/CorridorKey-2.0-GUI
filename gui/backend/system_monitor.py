@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import shutil
 from typing import Dict, Any, Tuple
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 
 try:
     from corridorkey.runtime import estimate_peak_vram_gb, select_vram_profile
@@ -47,7 +50,7 @@ def get_gpu_info() -> Dict[str, Any]:
             used_gb = mem.used / (1024 ** 3)
             free_gb = mem.free / (1024 ** 3)
             major, minor = (8, 0)
-            if torch.cuda.is_available():
+            if torch is not None and torch.cuda.is_available():
                 try:
                     major, minor = torch.cuda.get_device_capability()
                 except Exception:
@@ -67,7 +70,7 @@ def get_gpu_info() -> Dict[str, Any]:
         except Exception:
             pass
 
-    if not torch.cuda.is_available():
+    if torch is None or not torch.cuda.is_available():
         return {
             "available": False,
             "device_name": "No CUDA GPU detected",

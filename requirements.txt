@@ -15,4 +15,9 @@ einops>=0.8
 scipy>=1.16
 pillow>=11
 tqdm>=4.67
-utils3d @ git+https://github.com/EasternJournalist/utils3d.git@83bfa5bda008803f6521ce9547f94023b8afeddd
+# System Telemetry & Accelerated Video I/O
+openexr
+nvidia-ml-py
+
+# 3D Geometry Utilities (Direct ZIP URL to ensure clean install without requiring Git)
+utils3d @ https://github.com/EasternJournalist/utils3d/archive/83bfa5bda008803f6521ce9547f94023b8afeddd.zip
