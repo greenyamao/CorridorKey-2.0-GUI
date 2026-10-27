@@ -734,13 +734,27 @@ class InspectorPanel(QFrame):
         self.chk_out_webm.setChecked(True)
         self.chk_out_webm.setToolTip(
             "<b>WebM (VP9 + Alpha)</b><br>"
-            "Compact video with transparent alpha channel for Premiere Pro, DaVinci Resolve, OBS & web.<br>"
-            "&bull; <b>Size:</b> ~50-80 MB for 4K (20x-30x smaller than ProRes 4444).<br>"
-            "&bull; <b>Recommended</b> for content creators and fast editing workflows."
+            "High-quality compact video with transparent alpha channel encoded at CRF 14.<br>"
+            "&bull; <b>Visual quality:</b> Clean, smooth alpha gradients without noisy DCT block artifacts or ringing on hair and glass.<br>"
+            "&bull; <b>Size:</b> ~50-80 MB per minute (30x-40x smaller than ProRes 4444).<br>"
+            "&bull; <b>Best for:</b> OBS Studio, streaming overlays, web players, and lightweight transparent video storage."
         )
         deliv_vbox.addWidget(self.chk_out_webm)
 
-        # 2. Checkerboard Preview (MP4)
+        # 2. CineForm MOV with Alpha
+        self.chk_out_cineform = CheckBox("CineForm (MOV + Alpha)")
+        self.chk_out_cineform.setChecked(True)
+        self.chk_out_cineform.setToolTip(
+            "<b>CineForm (MOV + Alpha)</b><br>"
+            "12-bit intermediate video with alpha channel in QuickTime MOV container.<br>"
+            "&bull; <b>Native support:</b> Opens out of the box in Adobe Premiere Pro, DaVinci Resolve, and After Effects without any plugins.<br>"
+            "&bull; <b>Wavelet compression:</b> Smooth continuous alpha edges around fine hair and transparent glass.<br>"
+            "&bull; <b>Size:</b> ~350-500 MB per minute (4x-5x lighter than ProRes 4444).<br>"
+            "&bull; <b>Recommended</b> for video editors who want clean transparency without massive 2+ GB file sizes."
+        )
+        deliv_vbox.addWidget(self.chk_out_cineform)
+
+        # 3. Checkerboard Preview (MP4)
         self.chk_out_checker = CheckBox("Checkerboard Preview (MP4)")
         self.chk_out_checker.setChecked(True)
         self.chk_out_checker.setToolTip(
@@ -1214,7 +1228,7 @@ class InspectorPanel(QFrame):
                 outputs.append("alpha")
             out_fmt = "exr"
         else:
-            if self.chk_out_webm.isChecked() or self.chk_out_prores.isChecked():
+            if self.chk_out_webm.isChecked() or self.chk_out_prores.isChecked() or self.chk_out_cineform.isChecked():
                 outputs.append("cutout")
             if self.chk_out_checker.isChecked():
                 outputs.append("checker")
@@ -1287,6 +1301,7 @@ class InspectorPanel(QFrame):
             temp_dir=self.custom_temp_dir or None,
             outputs=outputs,
             export_webm=self.chk_out_webm.isChecked(),
+            export_cineform=self.chk_out_cineform.isChecked(),
             export_checker=self.chk_out_checker.isChecked(),
             export_alpha=self.chk_out_alpha.isChecked(),
             export_prores=self.chk_out_prores.isChecked(),
@@ -1350,6 +1365,7 @@ class InspectorPanel(QFrame):
 
         settings.beginGroup("Deliver")
         settings.setValue("out_webm", self.chk_out_webm.isChecked())
+        settings.setValue("out_cineform", self.chk_out_cineform.isChecked())
         settings.setValue("out_checker", self.chk_out_checker.isChecked())
         settings.setValue("out_alpha", self.chk_out_alpha.isChecked())
         settings.setValue("out_prores", self.chk_out_prores.isChecked())
@@ -1405,6 +1421,8 @@ class InspectorPanel(QFrame):
         settings.beginGroup("Deliver")
         if settings.contains("out_webm"):
             self.chk_out_webm.setChecked(settings.value("out_webm", True, type=bool))
+        if settings.contains("out_cineform"):
+            self.chk_out_cineform.setChecked(settings.value("out_cineform", True, type=bool))
         if settings.contains("out_checker"):
             self.chk_out_checker.setChecked(settings.value("out_checker", True, type=bool))
         if settings.contains("out_alpha"):

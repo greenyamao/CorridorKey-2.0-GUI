@@ -42,6 +42,7 @@ class RenderTask:
     # Outputs Selection: alpha, fg, cutout, checker
     outputs: List[str] = field(default_factory=lambda: ["cutout", "checker"])
     export_webm: bool = True
+    export_cineform: bool = True
     export_checker: bool = True
     export_alpha: bool = False
     export_prores: bool = False
@@ -425,7 +426,7 @@ class RenderRunner(QThread):
                     # 2. Generate WebM (VP9 + Alpha) from EXR if requested
                     if self.task.export_webm and not webm_path.is_file():
                         self.progress_changed.emit(
-                            self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 97.0,
                             "Encoding WebM (VP9 + Alpha)..."
                         )
                         cmd_webm = [
@@ -435,7 +436,8 @@ class RenderRunner(QThread):
                             "-c:v", "libvpx-vp9",
                             "-pix_fmt", "yuva420p",
                             "-b:v", "0",
-                            "-crf", "26",
+                            "-crf", "14",
+                            "-auto-alt-ref", "0",
                             "-row-mt", "1",
                             "-threads", "4",
                             str(webm_path)
@@ -445,7 +447,28 @@ class RenderRunner(QThread):
                         except Exception as e:
                             self.log_received.emit(self.task.task_id, f"[Warning] WebM encoding failed: {e}\n")
 
-                    # 3. Generate ProRes 4444 MOV from EXR if requested
+                    # 3. Generate CineForm (MOV + Alpha) from EXR if requested
+                    cineform_mov = out_dir / f"{clip_stem}_cutout_cineform.mov"
+                    if self.task.export_cineform and not cineform_mov.is_file():
+                        self.progress_changed.emit(
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
+                            "Encoding CineForm (MOV + Alpha)..."
+                        )
+                        cmd_cineform = [
+                            "ffmpeg", "-y",
+                            "-framerate", str(fps),
+                            "-i", exr_pattern,
+                            "-c:v", "cfhd",
+                            "-pix_fmt", "gbrap12le",
+                            "-quality", "film1",
+                            str(cineform_mov)
+                        ]
+                        try:
+                            subprocess.run(cmd_cineform, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        except Exception as e:
+                            self.log_received.emit(self.task.task_id, f"[Warning] CineForm encoding failed: {e}\n")
+
+                    # 4. Generate ProRes 4444 MOV from EXR if requested
                     if self.task.export_prores and not cutout_mov.is_file():
                         self.progress_changed.emit(
                             self.task.task_id, self.task.total_frames, self.task.total_frames, 99.0,
@@ -467,15 +490,17 @@ class RenderRunner(QThread):
 
                 # Case B: Video mode was rendered natively
                 elif cutout_mov.is_file():
+                    # 1. Generate WebM (VP9 + Alpha)
                     if self.task.export_webm and not webm_path.is_file():
                         self.progress_changed.emit(
-                            self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 97.0,
                             "Encoding WebM (VP9 + Alpha)..."
                         )
                         cmd_webm = [
                             "ffmpeg", "-y", "-i", str(cutout_mov),
                             "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
-                            "-b:v", "0", "-crf", "26",
+                            "-b:v", "0", "-crf", "14",
+                            "-auto-alt-ref", "0",
                             "-row-mt", "1", "-threads", "4",
                             str(webm_path)
                         ]
@@ -484,7 +509,29 @@ class RenderRunner(QThread):
                         except Exception as e:
                             self.log_received.emit(self.task.task_id, f"[Warning] WebM encoding failed: {e}\n")
 
-                    if not self.task.export_prores and webm_path.is_file() and webm_path.stat().st_size > 0:
+                    # 2. Generate CineForm (MOV + Alpha)
+                    cineform_mov = out_dir / f"{clip_stem}_cutout_cineform.mov"
+                    if self.task.export_cineform and not cineform_mov.is_file():
+                        self.progress_changed.emit(
+                            self.task.task_id, self.task.total_frames, self.task.total_frames, 98.0,
+                            "Encoding CineForm (MOV + Alpha)..."
+                        )
+                        cmd_cineform = [
+                            "ffmpeg", "-y", "-i", str(cutout_mov),
+                            "-c:v", "cfhd", "-pix_fmt", "gbrap12le",
+                            "-quality", "film1",
+                            str(cineform_mov)
+                        ]
+                        try:
+                            subprocess.run(cmd_cineform, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        except Exception as e:
+                            self.log_received.emit(self.task.task_id, f"[Warning] CineForm encoding failed: {e}\n")
+
+                    # 3. Clean up heavy ProRes 4444 cutout_mov if user did not request ProRes 4444
+                    if not self.task.export_prores and (
+                        (webm_path.is_file() and webm_path.stat().st_size > 0) or
+                        (cineform_mov.is_file() and cineform_mov.stat().st_size > 0)
+                    ):
                         try:
                             cutout_mov.unlink(missing_ok=True)
                         except Exception:
