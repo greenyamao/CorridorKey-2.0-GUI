@@ -153,8 +153,6 @@ class RenderRunner(QThread):
             "--frame_dir_fps", str(self.task.frame_dir_fps),
             "--output_format", self.task.output_format,
             "--exr_dtype", self.task.exr_dtype,
-            "--exr_compression", self.task.exr_compression,
-            "--exr_dwa_level", str(self.task.exr_dwa_level),
             "--ffmpeg_bin", self.task.ffmpeg_bin,
             "--ffmpeg_codec", self.task.ffmpeg_codec,
             "--crf", str(self.task.crf),
@@ -402,15 +400,17 @@ class RenderRunner(QThread):
             else:
                 err_summary = f"Inference exited with code {return_code}"
                 for el in reversed(recent_lines):
-                    if any(kw in el for kw in ["Error:", "Exception:", "ModuleNotFoundError", "FileNotFoundError", "RuntimeError", "CUDA out of memory"]):
+                    if any(kw in el for kw in ["Error:", "Exception:", "ModuleNotFoundError", "FileNotFoundError", "RuntimeError", "CUDA out of memory", "error:"]):
                         err_summary = el
                         break
+                details = "\n".join(recent_lines[-20:])
+                full_err = f"{err_summary}\n\nDetails:\n{details}" if details else err_summary
                 try:
                     from gui.backend.logger import logger
                     logger.error("[Infer:%s] Inference failed (code %s):\n%s", self.task.clip_name, return_code, "\n".join(recent_lines))
                 except Exception:
                     pass
-                self.finished_signal.emit(self.task.task_id, False, err_summary)
+                self.finished_signal.emit(self.task.task_id, False, full_err)
 
         except Exception as e:
             self.finished_signal.emit(self.task.task_id, False, f"Execution error: {e}")

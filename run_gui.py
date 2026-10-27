@@ -116,11 +116,11 @@ def optimize_windows_process():
         kernel32.SetProcessInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
         kernel32.SetProcessInformation(h_proc, 4, ctypes.byref(state), ctypes.sizeof(state))
 
-        # 3. Disable console QuickEdit mode so accidental clicks into console don't freeze stdout
+        # 3. Ensure console QuickEdit and Extended flags are enabled so users can select and copy text
         h_stdin = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
         mode = wintypes.DWORD()
         if kernel32.GetConsoleMode(h_stdin, ctypes.byref(mode)):
-            new_mode = (mode.value & ~0x0040) | 0x0080  # Remove ENABLE_QUICK_EDIT_MODE (0x40)
+            new_mode = mode.value | 0x0040 | 0x0080  # ENABLE_QUICK_EDIT_MODE (0x40) | ENABLE_EXTENDED_FLAGS (0x80)
             kernel32.SetConsoleMode(h_stdin, new_mode)
     except Exception:
         pass

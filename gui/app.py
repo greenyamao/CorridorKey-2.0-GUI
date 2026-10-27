@@ -760,8 +760,9 @@ class MainWindow(QMainWindow):
         if not task_out and clip_path:
             task_out = str(Path(self.inspector.output_dir) / Path(clip_path).stem)
 
+        clip_name = Path(clip_path).name if clip_path else "Task"
+
         if success:
-            clip_name = Path(clip_path).name if clip_path else "Task"
             if clip_path:
                 self.session_rendered_clips.add(clip_path)
                 self.session_clip_output_dirs[clip_path] = task_out
@@ -798,8 +799,32 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     print(f"[MainWindow] Could not open folder: {e}")
         else:
-            self.lbl_status.setText(f"Error: {msg}")
+            self.lbl_status.setText(f"Error: {clip_name}")
             self.lbl_status.setStyleSheet("color: #FF5252; font-size: 11px; font-weight: 600;")
+
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+            msg_box.setWindowTitle("Rendering Error")
+            msg_box.setText(f"Inference failed for clip:\n{clip_name}")
+            msg_box.setInformativeText(msg[:1500] if msg else "Unknown inference error.")
+            btn_copy = msg_box.addButton("Copy Error", QMessageBox.ButtonRole.ActionRole)
+            btn_open_log = msg_box.addButton("Open Log File", QMessageBox.ButtonRole.ActionRole)
+            btn_ok = msg_box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+            msg_box.exec()
+
+            if msg_box.clickedButton() == btn_copy:
+                from PySide6.QtGui import QGuiApplication
+                clipboard = QGuiApplication.clipboard()
+                if clipboard:
+                    clipboard.setText(msg)
+            elif msg_box.clickedButton() == btn_open_log:
+                root_dir = Path(__file__).resolve().parent.parent
+                log_file = root_dir / "corridorkey_gui.log"
+                if log_file.is_file():
+                    try:
+                        os.startfile(str(log_file))
+                    except Exception as e:
+                        print(f"[MainWindow] Could not open log: {e}")
 
         if self.active_runner is not None and self.active_runner.isRunning():
             self.active_runner.wait(500)
