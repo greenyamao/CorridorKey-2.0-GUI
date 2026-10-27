@@ -173,7 +173,7 @@ def ensure_environment():
     required_modules = {
         "PySide6": "PySide6>=6.6.0",
         "qfluentwidgets": "PySide6-Fluent-Widgets>=1.6.0",
-        "cv2": "opencv-python>=4.11",
+        "cv2": "opencv-python>=4.11,<5",
         "numpy": "numpy>=1.26,<2",
         "huggingface_hub": "huggingface-hub>=0.36",
         "timm": "timm>=1.0",
