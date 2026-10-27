@@ -662,39 +662,7 @@ class InspectorPanel(QFrame):
         ds_box.addWidget(self.lbl_ds_val)
         layout.addLayout(ds_box)
 
-        # Linear Brightness & Contrast (clean side-by-side)
-        bc_layout = QHBoxLayout()
-        bc_layout.setSpacing(6)
-        tip_bc = "<b>Linear Brightness & Contrast</b><br>Exposure and contrast adjustment of foreground subject in scene-linear color space."
 
-        lbl_bright = QLabel("Brightness:")
-        lbl_bright.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        lbl_bright.setToolTip(tip_bc)
-        bc_layout.addWidget(lbl_bright)
-
-        self.spin_brightness = StudioDoubleSpinBox()
-        self.spin_brightness.setRange(0.0, 5.0)
-        self.spin_brightness.setSingleStep(0.05)
-        self.spin_brightness.setValue(1.0)
-        self.spin_brightness.setFixedWidth(64)
-        self.spin_brightness.setToolTip(tip_bc)
-        bc_layout.addWidget(self.spin_brightness)
-
-        bc_layout.addSpacing(6)
-
-        lbl_contrast = QLabel("Contrast:")
-        lbl_contrast.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 500; font-size: 11px;")
-        lbl_contrast.setToolTip(tip_bc)
-        bc_layout.addWidget(lbl_contrast)
-
-        self.spin_contrast = StudioDoubleSpinBox()
-        self.spin_contrast.setRange(0.0, 5.0)
-        self.spin_contrast.setSingleStep(0.05)
-        self.spin_contrast.setValue(1.0)
-        self.spin_contrast.setFixedWidth(64)
-        self.spin_contrast.setToolTip(tip_bc)
-        bc_layout.addWidget(self.spin_contrast)
-        layout.addLayout(bc_layout)
 
         # Advanced VFX Linear Flags
         self.chk_cutout_linear = CheckBox("Cutout Straight Linear RGB (32-bit VFX)")
@@ -1317,8 +1285,8 @@ class InspectorPanel(QFrame):
             frame_dir_linear=self.chk_frame_dir_linear.isChecked(),
             cutout_linear=self.chk_cutout_linear.isChecked(),
             despill_strength=self.slider_despill.value() / 100.0,
-            linear_brightness=self.spin_brightness.value(),
-            linear_contrast=self.spin_contrast.value(),
+            linear_brightness=1.0,
+            linear_contrast=1.0,
             linear_contrast_pivot=0.18,
             output_format=out_fmt,
             ffmpeg_codec="libx264",
@@ -1357,8 +1325,6 @@ class InspectorPanel(QFrame):
         settings.beginGroup("Despill")
         settings.setValue("despill_color", self.cmb_despill_color.currentIndex())
         settings.setValue("despill_strength", self.slider_despill.value())
-        settings.setValue("brightness", self.spin_brightness.value())
-        settings.setValue("contrast", self.spin_contrast.value())
         settings.setValue("cutout_linear", self.chk_cutout_linear.isChecked())
         settings.setValue("frame_dir_linear", self.chk_frame_dir_linear.isChecked())
         settings.endGroup()
@@ -1408,10 +1374,6 @@ class InspectorPanel(QFrame):
             self.cmb_despill_color.setCurrentIndex(int(settings.value("despill_color", 0)))
         if settings.contains("despill_strength"):
             self.slider_despill.setValue(int(settings.value("despill_strength", 50)))
-        if settings.contains("brightness"):
-            self.spin_brightness.setValue(float(settings.value("brightness", 1.0)))
-        if settings.contains("contrast"):
-            self.spin_contrast.setValue(float(settings.value("contrast", 1.0)))
         if settings.contains("cutout_linear"):
             self.chk_cutout_linear.setChecked(settings.value("cutout_linear", False, type=bool))
         if settings.contains("frame_dir_linear"):
