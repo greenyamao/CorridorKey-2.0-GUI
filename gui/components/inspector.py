@@ -294,63 +294,7 @@ class InspectorPanel(QFrame):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(7)
 
-        # 0. Missing Weights Alert (Clean single-layer notification banner)
-        self.weights_card = QFrame()
-        self.weights_card.setObjectName("weightsBanner")
-        self.weights_card.setStyleSheet("""
-            QFrame#weightsBanner {
-                background-color: rgba(245, 158, 11, 0.12);
-                border: 1px solid #D97706;
-                border-radius: 6px;
-            }
-            QFrame#weightsBanner QLabel {
-                border: none;
-                background: transparent;
-                color: #FCD34D;
-            }
-        """)
-        wb_layout = QHBoxLayout(self.weights_card)
-        wb_layout.setContentsMargins(8, 5, 8, 5)
-        wb_layout.setSpacing(8)
 
-        icon_warn = QLabel()
-        icon_warn.setPixmap(FI.INFO.icon(color=QColor("#F59E0B")).pixmap(14, 14))
-        wb_layout.addWidget(icon_warn)
-
-        wc_title = QLabel("Weights missing (~5 GB)")
-        wc_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        wc_title.setToolTip("CorridorKey 2.0 model weights are missing from the weights/ folder. Click Download to download automatically.")
-        wb_layout.addWidget(wc_title, stretch=1)
-
-        btn_dl = QPushButton("Download")
-        btn_dl.setIcon(FI.DOWNLOAD.icon(color=QColor("#FFFFFF")))
-        btn_dl.setIconSize(QSize(12, 12))
-        btn_dl.setProperty("class", "yellow-btn")
-        btn_dl.setStyleSheet("""
-            QPushButton {
-                background-color: #D97706;
-                color: #FFFFFF;
-                font-weight: 700;
-                font-size: 11px;
-                border: 1px solid #F59E0B;
-                border-radius: 4px;
-                padding: 2px 10px;
-            }
-            QPushButton:hover {
-                background-color: #B45309;
-                border-color: #FBBF24;
-            }
-            QPushButton:pressed {
-                background-color: #92400E;
-            }
-        """)
-        btn_dl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_dl.setFixedHeight(24)
-        btn_dl.setToolTip("<b>Download CorridorKey 2.0 Weights (~5 GB)</b><br>Automatically downloads weights from Hugging Face and auxiliary models C-RADIOv4, MoGe-2, RVM.")
-        btn_dl.clicked.connect(self.download_weights_requested.emit)
-        wb_layout.addWidget(btn_dl)
-        layout.addWidget(self.weights_card)
-        self._check_weights_exist()
 
         # =====================================================================
         # 1. INFERENCE & VRAM
@@ -1000,14 +944,7 @@ class InspectorPanel(QFrame):
         layout.addStretch()
 
     def _check_weights_exist(self):
-        try:
-            from gui.managers.weights_manager import WeightsManager
-            has_weights = WeightsManager.are_all_weights_present()
-        except Exception:
-            root = Path(__file__).resolve().parent.parent.parent
-            weights_file = root / "weights" / "corridorkey_v2.safetensors"
-            has_weights = weights_file.exists() or (root / "weights" / "corridorkey_v2.pt").exists()
-        self.weights_card.setVisible(not has_weights)
+        pass
 
     def set_clip(self, clip: Optional[ClipInfo]):
         self.current_clip = clip
