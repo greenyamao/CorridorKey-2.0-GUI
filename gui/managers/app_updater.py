@@ -51,6 +51,8 @@ class AppUpdater:
                 pass
         return None
 
+    _latest_remote_sha: Optional[str] = None
+
     @classmethod
     def check_for_update(cls) -> Optional[Tuple[str, str]]:
         """
@@ -69,13 +71,20 @@ class AppUpdater:
                     remote_sha = data.get("sha", "")
                     short_sha = remote_sha[:7]
                     msg = data.get("commit", {}).get("message", "").split("\n")[0]
+                    cls._latest_remote_sha = remote_sha
 
                     if local_sha:
                         if not remote_sha.startswith(local_sha):
                             return (short_sha, msg)
-                    elif short_sha:
-                        # No local commit known, consider remote available
-                        return (short_sha, msg)
+                    elif remote_sha:
+                        # Fresh ZIP download without .git or .version.
+                        # Since the user just downloaded the latest main archive from GitHub,
+                        # record remote_sha into .version to prevent infinite auto-restart loops!
+                        try:
+                            (APP_ROOT / ".version").write_text(remote_sha, encoding="utf-8")
+                        except Exception:
+                            pass
+                        return None
         except Exception:
             pass
         return None
@@ -139,6 +148,14 @@ class AppUpdater:
                 zip_tmp.unlink()
             except Exception:
                 pass
+
+            # Persist the latest updated commit hash into .version
+            try:
+                if cls._latest_remote_sha:
+                    (APP_ROOT / ".version").write_text(cls._latest_remote_sha, encoding="utf-8")
+            except Exception:
+                pass
+
             return True
         except Exception as e:
             print(f"[AppUpdater] Archive update error: {e}")

@@ -238,6 +238,10 @@ def ensure_environment():
 
 def check_and_apply_gui_update():
     """Silently checks for latest GUI updates from GitHub and auto-applies before launch."""
+    # Prevent recursive restart loops within the same launch session
+    if os.environ.get("CORRIDORKEY_AUTO_UPDATED") == "1":
+        return
+
     try:
         from gui.managers.app_updater import AppUpdater
         update_info = AppUpdater.check_for_update()
@@ -247,7 +251,9 @@ def check_and_apply_gui_update():
             print("[AutoUpdate] Automatically applying update to CorridorKey Workbench...")
             if AppUpdater.update_gui():
                 print("[AutoUpdate] Update applied successfully! Restarting...")
-                res = subprocess.call([sys.executable] + sys.argv)
+                env = os.environ.copy()
+                env["CORRIDORKEY_AUTO_UPDATED"] = "1"
+                res = subprocess.call([sys.executable] + sys.argv, env=env)
                 sys.exit(res)
     except Exception:
         pass
