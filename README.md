@@ -26,7 +26,7 @@ If you encounter a bug, run into an error, or have a feature request, please [op
   * At least 4 GB VRAM for footage up to 1440p (`Low GPU Memory` mode).
   * At least 6–8 GB VRAM for 4K (`Low GPU Memory` mode).
   * *Note:* Older GPUs (RTX 20-series, GTX 10-series/16-series, AMD Radeon, Intel Arc) are not supported because they lack hardware `bfloat16` execution units required by the vision transformer architecture.
-* **Python:** Python 3.10, 3.11, or 3.12 with CUDA-enabled PyTorch installed
+* **Python:** Python 3.10, 3.11, or 3.12 with CUDA-enabled PyTorch installed (handled automatically by `launch_gui.bat`)
 * **FFmpeg:** Installed and available on system PATH (handled automatically by `launch_gui.bat`)
 
 ## Acknowledgements & Core Engine
