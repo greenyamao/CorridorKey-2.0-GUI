@@ -1003,18 +1003,11 @@ class InspectorPanel(QFrame):
         gpu_info = get_gpu_info()
         tot_vram = gpu_info.get("total_gb", 8.0)
         d_name = gpu_info.get("device_name", "")
-        preset_idx = self._get_default_hardware_preset()
-        preset_names = {
-            1: "High Quality (48 / 24)",
-            2: "Medium (24 / 12)",
-            3: "Low VRAM (8 / 4)",
-            5: "Single Frame (1 / 1)",
-        }
-        name = preset_names.get(preset_idx, "Medium (24 / 12)")
-        self.lbl_auto_hann_badge.setText(f"Auto Window: {name} (Optimized for {tot_vram:.0f} GB GPU)")
+        self.lbl_auto_hann_badge.setText(f"Auto Window: Dynamic VRAM (Optimized for {tot_vram:.0f} GB GPU)")
         tip = (
-            f"<b>Automatic Temporal Window: {name}</b><br>"
-            f"Optimized for {d_name or 'GPU'} ({tot_vram:.1f} GB VRAM).<br>"
+            f"<b>Automatic Temporal Window: Dynamic VRAM</b><br>"
+            f"Automatically optimizes chunk, stride, and memory caching for {d_name or 'GPU'} ({tot_vram:.1f} GB VRAM) "
+            f"and current resolution to maximize quality and prevent Out Of Memory errors.<br>"
             f"Check 'Manual Temporal Window' above to override."
         )
         self.lbl_auto_hann_badge.setToolTip(tip)
@@ -1024,28 +1017,15 @@ class InspectorPanel(QFrame):
         self.manual_hann_container.setVisible(is_manual)
         self.lbl_auto_hann_badge.setVisible(not is_manual)
         if not is_manual:
-            default_preset = self._get_default_hardware_preset()
-            self.cmb_hann_preset.setCurrentIndex(default_preset)
+            self.cmb_hann_preset.setCurrentIndex(0)
         self._recalc_vram()
 
     def _get_default_hardware_preset(self) -> int:
         """
-        Dynamically determine optimal Hann Window preset based on GPU VRAM and architecture:
-        - >= 11.5 GB VRAM: High Quality (48 / 24) -> index 1
-        - 7.5 GB - 11.5 GB VRAM: Medium (24 / 12) -> index 2 (optimal for RTX 5070, 4060, 3070)
-        - 5.5 GB - 7.5 GB VRAM: Low VRAM (8 / 4) -> index 3 (safe for RTX 3060 Mobile)
-        - <= 4.0 GB VRAM: Single Frame (1 / 1) -> index 5
+        Default preset index for ComboBox:
+        Index 0: Auto (Dynamic VRAM Allocation) - safest and optimal for all GPUs.
         """
-        gpu_info = get_gpu_info()
-        tot_vram = gpu_info.get("total_gb", 8.0)
-        if tot_vram >= 11.5:
-            return 1
-        elif tot_vram >= 7.5:
-            return 2
-        elif tot_vram >= 5.5:
-            return 3
-        else:
-            return 5
+        return 0
 
     def _on_hann_preset_changed(self, idx: int):
         self._user_modified_hann_preset = True
@@ -1066,16 +1046,16 @@ class InspectorPanel(QFrame):
         if self.chk_manual_hann.isChecked():
             preset_idx = self.cmb_hann_preset.currentIndex()
             auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
+            low_vram = self.chk_low_vram.isChecked()
             if preset_idx == 6:
                 hann_chunk = self.spin_hann_chunk.value()
             else:
                 hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 48)
         else:
-            preset_idx = self._get_default_hardware_preset()
-            auto_vram = False
-            hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 24)
-
-        low_vram = self.chk_low_vram.isChecked()
+            preset_idx = 0
+            auto_vram = True
+            low_vram = self.chk_low_vram.isChecked()
+            hann_chunk = 8
 
         vram_needed, fits, details = calculate_clip_vram_estimate(
             self.current_clip.width,
@@ -1254,11 +1234,13 @@ class InspectorPanel(QFrame):
             else:
                 hann_map = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
                 hann_chunk, hann_stride = hann_map.get(preset_idx, (48, 24))
+            low_vram = self.chk_low_vram.isChecked()
         else:
-            preset_idx = self._get_default_hardware_preset()
-            auto_vram = False
-            hann_map = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
-            hann_chunk, hann_stride = hann_map.get(preset_idx, (24, 12))
+            preset_idx = 0
+            auto_vram = True
+            hann_chunk = None
+            hann_stride = None
+            low_vram = self.chk_low_vram.isChecked()
 
         scale_vals = [1.0, 0.75, 0.50, 1.50, 2.00]
         model_scale = scale_vals[self.cmb_model_scale.currentIndex()]
