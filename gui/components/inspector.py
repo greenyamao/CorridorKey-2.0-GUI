@@ -304,7 +304,35 @@ class InspectorPanel(QFrame):
         tip_vram_sec = "<b>Inference & VRAM</b><br>CorridorKey 2.0 neural network inference settings and VRAM allocation."
         layout.addWidget(create_section_header("Inference & VRAM", tip_vram_sec))
 
-        # Hann Window row
+        # Manual Temporal Window Checkbox (unchecked by default)
+        self.chk_manual_hann = CheckBox("Manual Temporal Window")
+        self.chk_manual_hann.setChecked(False)
+        self.chk_manual_hann.setToolTip(
+            "<b>Manual Temporal Window</b><br>"
+            "Enable to manually configure temporal chunk and stride sizes.<br>"
+            "By default, CorridorKey automatically selects the optimal window based on your detected GPU hardware."
+        )
+        self.chk_manual_hann.stateChanged.connect(self._on_manual_hann_toggled)
+        layout.addWidget(self.chk_manual_hann)
+
+        # Automatic Hardware Match Badge (shown when manual window is unchecked)
+        self.lbl_auto_hann_badge = QLabel()
+        self.lbl_auto_hann_badge.setStyleSheet(
+            "background-color: rgba(56, 189, 248, 0.08); "
+            "border: 1px solid rgba(56, 189, 248, 0.22); "
+            "border-radius: 4px; padding: 5px 8px; "
+            "color: #38BDF8; font-size: 11px; font-weight: 500;"
+        )
+        self._update_auto_hann_badge()
+        layout.addWidget(self.lbl_auto_hann_badge)
+
+        # Manual Temporal Window container (hidden by default)
+        self.manual_hann_container = QWidget()
+        mhc_layout = QVBoxLayout(self.manual_hann_container)
+        mhc_layout.setContentsMargins(0, 0, 0, 0)
+        mhc_layout.setSpacing(6)
+
+        # Hann Window preset dropdown row
         h_box = QHBoxLayout()
         h_box.setSpacing(6)
         lbl_preset = QLabel("Hann Window:")
@@ -337,9 +365,9 @@ class InspectorPanel(QFrame):
         self.cmb_hann_preset.setCurrentIndex(default_preset)
         self.cmb_hann_preset.currentIndexChanged.connect(self._on_hann_preset_changed)
         h_box.addWidget(self.cmb_hann_preset, stretch=1)
-        layout.addLayout(h_box)
+        mhc_layout.addLayout(h_box)
 
-        # Custom Chunk / Stride row (hidden by default)
+        # Custom Chunk / Stride row (inside manual container)
         self.custom_hann_row = QWidget()
         chr_layout = QHBoxLayout(self.custom_hann_row)
         chr_layout.setContentsMargins(0, 0, 0, 0)
@@ -370,7 +398,10 @@ class InspectorPanel(QFrame):
         self.spin_hann_stride.setToolTip(tip_stride)
         chr_layout.addWidget(self.spin_hann_stride)
         self.custom_hann_row.hide()
-        layout.addWidget(self.custom_hann_row)
+        mhc_layout.addWidget(self.custom_hann_row)
+
+        self.manual_hann_container.hide()
+        layout.addWidget(self.manual_hann_container)
 
         # Low VRAM mode
         self.chk_low_vram = CheckBox("Low GPU Memory (Disk Caching)")
@@ -968,6 +999,35 @@ class InspectorPanel(QFrame):
         self.lbl_ds_val.setText(f"{val:.2f}")
         self.despill_changed.emit(val)
 
+    def _update_auto_hann_badge(self):
+        gpu_info = get_gpu_info()
+        tot_vram = gpu_info.get("total_gb", 8.0)
+        d_name = gpu_info.get("device_name", "")
+        preset_idx = self._get_default_hardware_preset()
+        preset_names = {
+            1: "High Quality (48 / 24)",
+            2: "Medium (24 / 12)",
+            3: "Low VRAM (8 / 4)",
+            5: "Single Frame (1 / 1)",
+        }
+        name = preset_names.get(preset_idx, "Medium (24 / 12)")
+        self.lbl_auto_hann_badge.setText(f"Auto Window: {name} (Optimized for {tot_vram:.0f} GB GPU)")
+        tip = (
+            f"<b>Automatic Temporal Window: {name}</b><br>"
+            f"Optimized for {d_name or 'GPU'} ({tot_vram:.1f} GB VRAM).<br>"
+            f"Check 'Manual Temporal Window' above to override."
+        )
+        self.lbl_auto_hann_badge.setToolTip(tip)
+
+    def _on_manual_hann_toggled(self, state: int):
+        is_manual = (state == Qt.CheckState.Checked.value or state == 2 or bool(state))
+        self.manual_hann_container.setVisible(is_manual)
+        self.lbl_auto_hann_badge.setVisible(not is_manual)
+        if not is_manual:
+            default_preset = self._get_default_hardware_preset()
+            self.cmb_hann_preset.setCurrentIndex(default_preset)
+        self._recalc_vram()
+
     def _get_default_hardware_preset(self) -> int:
         """
         Dynamically determine optimal Hann Window preset based on GPU VRAM and architecture:
@@ -1003,14 +1063,19 @@ class InspectorPanel(QFrame):
             self.lbl_vram_info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
             return
 
-        preset_idx = self.cmb_hann_preset.currentIndex()
-        auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
-        low_vram = self.chk_low_vram.isChecked()
-
-        if preset_idx == 6:
-            hann_chunk = self.spin_hann_chunk.value()
+        if self.chk_manual_hann.isChecked():
+            preset_idx = self.cmb_hann_preset.currentIndex()
+            auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
+            if preset_idx == 6:
+                hann_chunk = self.spin_hann_chunk.value()
+            else:
+                hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 48)
         else:
-            hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 48)
+            preset_idx = self._get_default_hardware_preset()
+            auto_vram = False
+            hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 24)
+
+        low_vram = self.chk_low_vram.isChecked()
 
         vram_needed, fits, details = calculate_clip_vram_estimate(
             self.current_clip.width,
@@ -1180,15 +1245,20 @@ class InspectorPanel(QFrame):
         exr_dwa_level_val = float(self.spin_dwa_level.value())
         pix_fmt = "yuv420p"
 
-        preset_idx = self.cmb_hann_preset.currentIndex()
-        auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
-
-        if preset_idx == 6:
-            hann_chunk = self.spin_hann_chunk.value()
-            hann_stride = self.spin_hann_stride.value()
+        if self.chk_manual_hann.isChecked():
+            preset_idx = self.cmb_hann_preset.currentIndex()
+            auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
+            if preset_idx == 6:
+                hann_chunk = self.spin_hann_chunk.value()
+                hann_stride = self.spin_hann_stride.value()
+            else:
+                hann_map = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
+                hann_chunk, hann_stride = hann_map.get(preset_idx, (48, 24))
         else:
+            preset_idx = self._get_default_hardware_preset()
+            auto_vram = False
             hann_map = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
-            hann_chunk, hann_stride = hann_map.get(preset_idx, (48, 24))
+            hann_chunk, hann_stride = hann_map.get(preset_idx, (24, 12))
 
         scale_vals = [1.0, 0.75, 0.50, 1.50, 2.00]
         model_scale = scale_vals[self.cmb_model_scale.currentIndex()]
@@ -1326,10 +1396,17 @@ class InspectorPanel(QFrame):
 
     def save_settings(self, settings: QSettings):
         settings.beginGroup("Inference")
-        settings.setValue("hann_preset_user_modified", getattr(self, "_user_modified_hann_preset", False))
-        settings.setValue("hann_preset", self.cmb_hann_preset.currentIndex())
-        settings.setValue("hann_chunk", self.spin_hann_chunk.value())
-        settings.setValue("hann_stride", self.spin_hann_stride.value())
+        is_manual = self.chk_manual_hann.isChecked()
+        settings.setValue("manual_hann", is_manual)
+        if is_manual:
+            settings.setValue("hann_preset", self.cmb_hann_preset.currentIndex())
+            settings.setValue("hann_chunk", self.spin_hann_chunk.value())
+            settings.setValue("hann_stride", self.spin_hann_stride.value())
+        else:
+            settings.remove("hann_preset")
+            settings.remove("hann_chunk")
+            settings.remove("hann_stride")
+            settings.remove("hann_preset_user_modified")
         settings.setValue("low_vram", self.chk_low_vram.isChecked())
         settings.setValue("model_scale", self.cmb_model_scale.currentIndex())
         settings.endGroup()
@@ -1366,18 +1443,21 @@ class InspectorPanel(QFrame):
 
     def load_settings(self, settings: QSettings):
         settings.beginGroup("Inference")
-        if settings.contains("hann_preset_user_modified") and settings.value("hann_preset_user_modified", type=bool):
+        is_manual = settings.value("manual_hann", False, type=bool)
+        self.chk_manual_hann.setChecked(is_manual)
+        self.manual_hann_container.setVisible(is_manual)
+        self.lbl_auto_hann_badge.setVisible(not is_manual)
+
+        if is_manual and settings.contains("hann_preset"):
             saved_idx = int(settings.value("hann_preset", self._get_default_hardware_preset()))
             self.cmb_hann_preset.setCurrentIndex(saved_idx)
-            self._user_modified_hann_preset = True
+            if settings.contains("hann_chunk"):
+                self.spin_hann_chunk.setValue(int(settings.value("hann_chunk", 48)))
+            if settings.contains("hann_stride"):
+                self.spin_hann_stride.setValue(int(settings.value("hann_stride", 24)))
         else:
             self.cmb_hann_preset.setCurrentIndex(self._get_default_hardware_preset())
-            self._user_modified_hann_preset = False
 
-        if settings.contains("hann_chunk"):
-            self.spin_hann_chunk.setValue(int(settings.value("hann_chunk", 48)))
-        if settings.contains("hann_stride"):
-            self.spin_hann_stride.setValue(int(settings.value("hann_stride", 24)))
         if settings.contains("low_vram"):
             self.chk_low_vram.setChecked(settings.value("low_vram", False, type=bool))
         if settings.contains("model_scale"):
