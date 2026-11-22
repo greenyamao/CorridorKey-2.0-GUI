@@ -103,17 +103,71 @@ def main():
             # Fall back to default OpenCV ZIP compression
             pass
 
-    # 3. Hook prepass iteration to emit real-time progress for GUI monitoring
+    # 3. Hardware Tensor Acceleration & Threading Optimizations
     try:
+        import torch
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability()
+            # Ampere (RTX 30), Ada (RTX 40), Blackwell (RTX 50) have native Tensor Cores
+            if major >= 8:
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                torch.backends.cudnn.benchmark = True
+                if hasattr(torch.backends.cuda, "enable_flash_sdp"):
+                    torch.backends.cuda.enable_flash_sdp(True)
+                if hasattr(torch.backends.cuda, "enable_mem_efficient_sdp"):
+                    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    except Exception:
+        pass
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetPriorityClass(
+                ctypes.windll.kernel32.GetCurrentProcess(), 0x00008000
+            )
+        except Exception:
+            pass
+
+    # 4. Asynchronous Threaded Prefetch Queue & Real-time Progress Monitoring
+    try:
+        import queue
+        import threading
         import corridorkey.video_io as video_io
         import corridorkey.runtime as runtime
+
+        def _prefetch_iterator(generator, max_prefetch: int = 4):
+            buf = queue.Queue(maxsize=max_prefetch)
+            sentinel = object()
+
+            def _worker():
+                try:
+                    for item in generator:
+                        buf.put(item)
+                except Exception as exc:
+                    buf.put(exc)
+                finally:
+                    buf.put(sentinel)
+
+            worker_thread = threading.Thread(target=_worker, daemon=True)
+            worker_thread.start()
+
+            while True:
+                chunk_item = buf.get()
+                if chunk_item is sentinel:
+                    break
+                if isinstance(chunk_item, Exception):
+                    raise chunk_item
+                yield chunk_item
 
         orig_iter_video = video_io.iter_video_frame_chunks
 
         def tracked_iter_video(video_path, meta, chunk_size, need_model):
             tot = int(meta.get("num_frames", 1))
             last_reported = -1
-            for item in orig_iter_video(video_path, meta, chunk_size=chunk_size, need_model=need_model):
+            raw_gen = orig_iter_video(video_path, meta, chunk_size=chunk_size, need_model=need_model)
+            chunk_gen = _prefetch_iterator(raw_gen, max_prefetch=4) if tot > 64 else raw_gen
+            for item in chunk_gen:
                 t0, _m, disp = item
                 cur = t0 + disp.shape[0]
                 if cur - last_reported >= 32 or cur >= tot:
@@ -127,7 +181,9 @@ def main():
         def tracked_iter_dir(frame_dir, meta, chunk_size, need_model):
             tot = int(meta.get("num_frames", 1))
             last_reported = -1
-            for item in orig_iter_dir(frame_dir, meta, chunk_size=chunk_size, need_model=need_model):
+            raw_gen = orig_iter_dir(frame_dir, meta, chunk_size=chunk_size, need_model=need_model)
+            chunk_gen = _prefetch_iterator(raw_gen, max_prefetch=4) if tot > 64 else raw_gen
+            for item in chunk_gen:
                 t0, _m, disp = item
                 cur = t0 + disp.shape[0]
                 if cur - last_reported >= 32 or cur >= tot:
@@ -143,7 +199,7 @@ def main():
     except Exception:
         pass
 
-    # 4. Strip launcher arguments so sys.argv[0] is infer_script and args match exactly
+    # 5. Strip launcher arguments so sys.argv[0] is infer_script and args match exactly
     del sys.argv[0:2]
     runpy.run_path(infer_script, run_name="__main__")
 
