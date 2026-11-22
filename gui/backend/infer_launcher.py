@@ -103,7 +103,47 @@ def main():
             # Fall back to default OpenCV ZIP compression
             pass
 
-    # 3. Strip launcher arguments so sys.argv[0] is infer_script and args match exactly
+    # 3. Hook prepass iteration to emit real-time progress for GUI monitoring
+    try:
+        import corridorkey.video_io as video_io
+        import corridorkey.runtime as runtime
+
+        orig_iter_video = video_io.iter_video_frame_chunks
+
+        def tracked_iter_video(video_path, meta, chunk_size, need_model):
+            tot = int(meta.get("num_frames", 1))
+            last_reported = -1
+            for item in orig_iter_video(video_path, meta, chunk_size=chunk_size, need_model=need_model):
+                t0, _m, disp = item
+                cur = t0 + disp.shape[0]
+                if cur - last_reported >= 32 or cur >= tot:
+                    last_reported = cur
+                    pct = (cur / max(1, tot)) * 100.0
+                    print(f"[PrepassChunk] frame {cur}/{tot} ({pct:.1f}%)", flush=True)
+                yield item
+
+        orig_iter_dir = video_io.iter_frame_dir_chunks
+
+        def tracked_iter_dir(frame_dir, meta, chunk_size, need_model):
+            tot = int(meta.get("num_frames", 1))
+            last_reported = -1
+            for item in orig_iter_dir(frame_dir, meta, chunk_size=chunk_size, need_model=need_model):
+                t0, _m, disp = item
+                cur = t0 + disp.shape[0]
+                if cur - last_reported >= 32 or cur >= tot:
+                    last_reported = cur
+                    pct = (cur / max(1, tot)) * 100.0
+                    print(f"[PrepassChunk] frame {cur}/{tot} ({pct:.1f}%)", flush=True)
+                yield item
+
+        video_io.iter_video_frame_chunks = tracked_iter_video
+        runtime.iter_video_frame_chunks = tracked_iter_video
+        video_io.iter_frame_dir_chunks = tracked_iter_dir
+        runtime.iter_frame_dir_chunks = tracked_iter_dir
+    except Exception:
+        pass
+
+    # 4. Strip launcher arguments so sys.argv[0] is infer_script and args match exactly
     del sys.argv[0:2]
     runpy.run_path(infer_script, run_name="__main__")
 

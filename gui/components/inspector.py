@@ -246,9 +246,10 @@ class StudioNumberInput(QLineEdit):
 
 
 class InspectorPanel(QFrame):
-    """Clean, flat Windows 11 Workbench Inspector Panel in English with comprehensive Russian hover tooltips."""
+    """Clean, flat Windows 11 Workbench Inspector Panel in pure English."""
 
     render_requested = Signal(RenderTask)
+    cancel_requested = Signal()
     add_queue_requested = Signal(RenderTask)
     download_weights_requested = Signal()
     hint_changed = Signal(str)
@@ -273,6 +274,7 @@ class InspectorPanel(QFrame):
         self.custom_weights_path: str = ""
         self.custom_temp_dir: str = ""
         self.hint_file_path: str = ""
+        self._is_rendering: bool = False
 
         # Outer layout
         panel_layout = QVBoxLayout(self)
@@ -954,6 +956,8 @@ class InspectorPanel(QFrame):
             self.cmb_hint_frames.setCurrentIndex(0)
             self.txt_hint_path.setText("None (Auto Segmentation)")
             self.txt_hint_path.setToolTip("Neural network automatically segments the primary subject without hints.")
+        if getattr(self, "_is_rendering", False):
+            self.set_rendering_state(True)
         self._recalc_vram()
 
     def _on_despill_slider_changed(self, v: int):
@@ -1234,7 +1238,38 @@ class InspectorPanel(QFrame):
             stage2_batch=2,
         )
 
+    def set_rendering_state(self, is_rendering: bool):
+        self._is_rendering = is_rendering
+        if is_rendering:
+            self.btn_render.setText("Cancel Render")
+            self.btn_render.setIcon(FI.CLOSE.icon(color=QColor("#FFFFFF")))
+            self.btn_render.setStyleSheet("""
+                QPushButton {
+                    background-color: #7F1D1D;
+                    border: 1px solid #EF4444;
+                    color: #FFFFFF;
+                    font-weight: 700;
+                    font-size: 11px;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #991B1B;
+                    border-color: #F87171;
+                }
+            """)
+            self.btn_render.setToolTip("<b>Cancel Render</b><br>Stop the currently running inference task immediately.")
+            self.btn_render.setEnabled(True)
+        else:
+            self.btn_render.setText("Render Active Clip")
+            self.btn_render.setIcon(FI.PLAY.icon(color=QColor("#FFFFFF")))
+            self.btn_render.setStyleSheet("")
+            self.btn_render.setToolTip("<b>Render Active Clip (Ctrl+R)</b><br>Process currently selected clip with current settings.")
+            self.btn_render.setEnabled(True)
+
     def _on_render(self):
+        if getattr(self, "_is_rendering", False):
+            self.cancel_requested.emit()
+            return
         task = self.get_render_task()
         if task is not None:
             self.render_requested.emit(task)

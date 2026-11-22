@@ -100,8 +100,12 @@ class RenderRunner(QThread):
     def cancel(self):
         self._is_cancelled = True
         if self._process and self._process.poll() is None:
+            pid = self._process.pid
             try:
-                self._process.terminate()
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, timeout=2)
+                else:
+                    self._process.terminate()
             except Exception:
                 pass
             try:
@@ -240,6 +244,7 @@ class RenderRunner(QThread):
             )
 
             current_stage = 0
+            current_prepass = "rvm"
             last_pct = 0.0
             stage1_start_time: Optional[float] = None
             stage1_duration = 60.0
@@ -293,22 +298,45 @@ class RenderRunner(QThread):
                     m_w = re.search(r"(\d+)%", line)
                     if m_w:
                         w_pct = float(m_w.group(1))
-                        target_pct = w_pct * 0.03
+                        target_pct = w_pct * 0.01
                         if target_pct > last_pct:
                             last_pct = target_pct
                             self.progress_changed.emit(
                                 self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Loading neural weights..."
                             )
                 elif "rvm continuous prepass" in line_lower:
-                    last_pct = max(last_pct, 3.5)
+                    current_prepass = "rvm"
+                    last_pct = max(last_pct, 1.0)
                     self.progress_changed.emit(
                         self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: RVM temporal features..."
                     )
                 elif "frozen vfm prepass" in line_lower:
-                    last_pct = max(last_pct, 4.5)
+                    current_prepass = "vfm"
+                    last_pct = max(last_pct, 3.5)
                     self.progress_changed.emit(
                         self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: Vision foundation representations..."
                     )
+                elif "[prepasschunk]" in line_lower:
+                    m_p = re.search(r"frame\s+(\d+)/(\d+)", line, re.IGNORECASE)
+                    if m_p:
+                        cur_f, tot_f = int(m_p.group(1)), int(m_p.group(2))
+                        if tot_f > 0:
+                            ratio = cur_f / tot_f
+                            if current_prepass == "vfm":
+                                target_pct = 3.5 + ratio * 1.5
+                                step_name = "Vision foundations"
+                            else:
+                                target_pct = 1.0 + ratio * 2.5
+                                step_name = "RVM temporal features"
+                            if target_pct > last_pct:
+                                last_pct = target_pct
+                            self.progress_changed.emit(
+                                self.task.task_id,
+                                cur_f,
+                                self.task.total_frames,
+                                round(last_pct, 1),
+                                f"Prepass: {step_name} ({cur_f}/{tot_f} frames, {round(ratio * 100)}%)...",
+                            )
                 elif "hann stage1:" in line_lower:
                     current_stage = 1
                     stage1_start_time = time.time()

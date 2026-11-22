@@ -240,6 +240,7 @@ class MainWindow(QMainWindow):
         # 3. Right Column: Inspector Panel
         self.inspector = InspectorPanel()
         self.inspector.render_requested.connect(self._on_render_active_clip)
+        self.inspector.cancel_requested.connect(self._on_cancel_render)
         self.inspector.download_weights_requested.connect(self._open_weight_downloader)
         self.inspector.hint_changed.connect(self._on_hint_changed)
         self.inspector.paint_mask_requested.connect(self._open_mask_painter)
@@ -596,6 +597,8 @@ class MainWindow(QMainWindow):
 
         self.timeline.set_clip(clip.total_frames, clip.fps)
         self.inspector.set_clip(clip)
+        if self.active_runner is not None and self.active_runner.isRunning():
+            self.inspector.set_rendering_state(True)
 
         # Clean slate: Do NOT apply old hint masks to raw video playback
         self._active_hint_mask = None
@@ -706,12 +709,20 @@ class MainWindow(QMainWindow):
             self.media_panel.set_batch_running(True)
             self._process_next_in_queue()
 
+    def _on_cancel_render(self):
+        self.render_queue.clear()
+        if self.active_runner is not None:
+            self.lbl_status.setText("Cancelling render...")
+            self.lbl_status.setStyleSheet("color: #F87171; font-size: 11px; font-weight: 600;")
+            self.active_runner.cancel()
+
     def _on_stop_batch(self):
         self.render_queue.clear()
         if self.active_runner is not None:
             self.active_runner.cancel()
             if self.active_runner.isRunning():
                 self.active_runner.wait(500)
+        self.inspector.set_rendering_state(False)
         self.media_panel.set_batch_running(False)
         self.lbl_status.setText("Batch Stopped")
 
@@ -719,6 +730,7 @@ class MainWindow(QMainWindow):
         if self.active_runner is not None:
             return
         if not self.render_queue:
+            self.inspector.set_rendering_state(False)
             self.media_panel.set_batch_running(False)
             self.lbl_status.setText("All tasks completed")
             return
@@ -738,7 +750,7 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f"Rendering: {task.clip_name}")
         self.lbl_status.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 11px; font-weight: 600;")
 
-        self.inspector.btn_render.setEnabled(False)
+        self.inspector.set_rendering_state(True)
 
         self.active_runner = RenderRunner(task, parent=self)
         self.active_runner.progress_changed.connect(self._on_render_progress)
@@ -751,16 +763,22 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(status)
 
     def _on_render_finished(self, task_id: str, success: bool, msg: str):
-        self.inspector.btn_render.setEnabled(True)
+        self.inspector.set_rendering_state(False)
         clip_path = self._current_rendering_path
+        clip_name = Path(clip_path).name if clip_path else "Task"
+        is_cancelled = (self.active_runner and self.active_runner._is_cancelled) or ("cancelled" in msg.lower())
+
         if clip_path:
-            self.media_panel.set_clip_status(clip_path, "Done" if success else "Error")
+            if success:
+                self.media_panel.set_clip_status(clip_path, "Done")
+            elif is_cancelled:
+                self.media_panel.set_clip_status(clip_path, "Ready")
+            else:
+                self.media_panel.set_clip_status(clip_path, "Error")
 
         task_out = getattr(self, '_current_task_output_dir', "") or getattr(self, '_last_rendered_out_dir', "")
         if not task_out and clip_path:
             task_out = str(Path(self.inspector.output_dir) / Path(clip_path).stem)
-
-        clip_name = Path(clip_path).name if clip_path else "Task"
 
         if success:
             if clip_path:
@@ -798,6 +816,9 @@ class MainWindow(QMainWindow):
                     os.startfile(task_out)
                 except Exception as e:
                     print(f"[MainWindow] Could not open folder: {e}")
+        elif is_cancelled:
+            self.lbl_status.setText(f"Cancelled: {clip_name}")
+            self.lbl_status.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 600;")
         else:
             self.lbl_status.setText(f"Error: {clip_name}")
             self.lbl_status.setStyleSheet("color: #FF5252; font-size: 11px; font-weight: 600;")
