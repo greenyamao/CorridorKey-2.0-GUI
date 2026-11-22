@@ -323,7 +323,7 @@ class InspectorPanel(QFrame):
 
         self.cmb_hann_preset = ComboBox()
         self.cmb_hann_preset.addItems([
-            "Auto VRAM (Optimized for 8 GB)",
+            "Auto (Dynamic VRAM Allocation)",
             "High Quality (48 / 24)",
             "Medium (24 / 12)",
             "Low VRAM (8 / 4)",
@@ -332,6 +332,9 @@ class InspectorPanel(QFrame):
             "Custom...",
         ])
         self.cmb_hann_preset.setToolTip(tip_hann)
+        self._user_modified_hann_preset = False
+        default_preset = self._get_default_hardware_preset()
+        self.cmb_hann_preset.setCurrentIndex(default_preset)
         self.cmb_hann_preset.currentIndexChanged.connect(self._on_hann_preset_changed)
         h_box.addWidget(self.cmb_hann_preset, stretch=1)
         layout.addLayout(h_box)
@@ -965,7 +968,27 @@ class InspectorPanel(QFrame):
         self.lbl_ds_val.setText(f"{val:.2f}")
         self.despill_changed.emit(val)
 
+    def _get_default_hardware_preset(self) -> int:
+        """
+        Dynamically determine optimal Hann Window preset based on GPU VRAM and architecture:
+        - >= 11.5 GB VRAM: High Quality (48 / 24) -> index 1
+        - 7.5 GB - 11.5 GB VRAM: Medium (24 / 12) -> index 2 (optimal for RTX 5070, 4060, 3070)
+        - 5.5 GB - 7.5 GB VRAM: Low VRAM (8 / 4) -> index 3 (safe for RTX 3060 Mobile)
+        - <= 4.0 GB VRAM: Single Frame (1 / 1) -> index 5
+        """
+        gpu_info = get_gpu_info()
+        tot_vram = gpu_info.get("total_gb", 8.0)
+        if tot_vram >= 11.5:
+            return 1
+        elif tot_vram >= 7.5:
+            return 2
+        elif tot_vram >= 5.5:
+            return 3
+        else:
+            return 5
+
     def _on_hann_preset_changed(self, idx: int):
+        self._user_modified_hann_preset = True
         self.custom_hann_row.setVisible(idx == 6)
         presets = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
         if idx in presets:
@@ -1303,6 +1326,7 @@ class InspectorPanel(QFrame):
 
     def save_settings(self, settings: QSettings):
         settings.beginGroup("Inference")
+        settings.setValue("hann_preset_user_modified", getattr(self, "_user_modified_hann_preset", False))
         settings.setValue("hann_preset", self.cmb_hann_preset.currentIndex())
         settings.setValue("hann_chunk", self.spin_hann_chunk.value())
         settings.setValue("hann_stride", self.spin_hann_stride.value())
@@ -1342,8 +1366,14 @@ class InspectorPanel(QFrame):
 
     def load_settings(self, settings: QSettings):
         settings.beginGroup("Inference")
-        if settings.contains("hann_preset"):
-            self.cmb_hann_preset.setCurrentIndex(int(settings.value("hann_preset", 0)))
+        if settings.contains("hann_preset_user_modified") and settings.value("hann_preset_user_modified", type=bool):
+            saved_idx = int(settings.value("hann_preset", self._get_default_hardware_preset()))
+            self.cmb_hann_preset.setCurrentIndex(saved_idx)
+            self._user_modified_hann_preset = True
+        else:
+            self.cmb_hann_preset.setCurrentIndex(self._get_default_hardware_preset())
+            self._user_modified_hann_preset = False
+
         if settings.contains("hann_chunk"):
             self.spin_hann_chunk.setValue(int(settings.value("hann_chunk", 48)))
         if settings.contains("hann_stride"):
