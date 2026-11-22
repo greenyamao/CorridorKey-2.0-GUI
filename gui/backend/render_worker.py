@@ -246,8 +246,8 @@ class RenderRunner(QThread):
             current_stage = 0
             current_prepass = "rvm"
             last_pct = 0.0
+            last_log_time = time.time()
             stage1_start_time: Optional[float] = None
-            stage1_duration = 60.0
             stage2_start_time: Optional[float] = None
             stop_stage2_ticker = threading.Event()
 
@@ -256,18 +256,16 @@ class RenderRunner(QThread):
                 while not stop_stage2_ticker.is_set() and not self._is_cancelled:
                     stop_stage2_ticker.wait(1.0)
                     if current_stage == 2 and stage2_start_time is not None:
-                        elapsed = time.time() - stage2_start_time
-                        ratio = min(0.96, elapsed / max(15.0, stage1_duration * 1.15))
-                        target_pct = 55.0 + ratio * 38.0
-                        if target_pct > last_pct:
-                            last_pct = target_pct
-                            cur_frame = int(self.task.total_frames * (last_pct / 100.0))
+                        # Gentle heartbeat ticker if frame outputs are batch-buffered
+                        if time.time() - last_log_time > 5.0 and last_pct < 98.0:
+                            last_pct = min(98.0, last_pct + 0.05)
+                            cur_f = int(self.task.total_frames * (last_pct / 100.0))
                             self.progress_changed.emit(
                                 self.task.task_id,
-                                cur_frame,
+                                cur_f,
                                 self.task.total_frames,
                                 round(last_pct, 1),
-                                f"Stage 2: High-resolution matte refinement & video encoding ({round(last_pct)}%)...",
+                                f"Stage 2: High-resolution matte & video encoding ({round(last_pct)}%)...",
                             )
 
             ticker_thread = threading.Thread(target=_stage2_ticker, daemon=True)
@@ -280,6 +278,7 @@ class RenderRunner(QThread):
                 line = raw_line.strip()
                 if not line:
                     continue
+                last_log_time = time.time()
                 recent_lines.append(line)
                 if len(recent_lines) > 30:
                     recent_lines.pop(0)
@@ -293,40 +292,46 @@ class RenderRunner(QThread):
 
                 line_lower = line.lower()
 
-                # Stage 0: Weight & foundation prepass loading (0% - 5%)
+                # Phase 0: Weight & foundation prepass loading (0% - 1.5%)
                 if "loading weights:" in line_lower:
                     m_w = re.search(r"(\d+)%", line)
                     if m_w:
                         w_pct = float(m_w.group(1))
-                        target_pct = w_pct * 0.01
+                        target_pct = min(1.5, w_pct * 0.015)
                         if target_pct > last_pct:
                             last_pct = target_pct
                             self.progress_changed.emit(
                                 self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Loading neural weights..."
                             )
+
+                # Phase 1: Prepass RVM (1.5% - 15.0%)
                 elif "rvm continuous prepass" in line_lower:
                     current_prepass = "rvm"
-                    last_pct = max(last_pct, 1.0)
+                    last_pct = max(last_pct, 1.5)
                     self.progress_changed.emit(
-                        self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: RVM temporal features..."
+                        self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: Initializing RVM temporal model..."
                     )
+
+                # Phase 2: Prepass Vision Foundations (15.0% - 30.0%)
                 elif "frozen vfm prepass" in line_lower:
                     current_prepass = "vfm"
-                    last_pct = max(last_pct, 3.5)
+                    last_pct = max(last_pct, 15.0)
                     self.progress_changed.emit(
-                        self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: Vision foundation representations..."
+                        self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Prepass: Initializing vision foundation models..."
                     )
+
+                # Linear Prepass Frame Progress
                 elif "[prepasschunk]" in line_lower:
                     m_p = re.search(r"frame\s+(\d+)/(\d+)", line, re.IGNORECASE)
                     if m_p:
                         cur_f, tot_f = int(m_p.group(1)), int(m_p.group(2))
                         if tot_f > 0:
-                            ratio = cur_f / tot_f
+                            ratio = min(1.0, cur_f / tot_f)
                             if current_prepass == "vfm":
-                                target_pct = 3.5 + ratio * 1.5
+                                target_pct = 15.0 + ratio * 15.0  # 15% -> 30%
                                 step_name = "Vision foundations"
                             else:
-                                target_pct = 1.0 + ratio * 2.5
+                                target_pct = 1.5 + ratio * 13.5  # 1.5% -> 15%
                                 step_name = "RVM temporal features"
                             if target_pct > last_pct:
                                 last_pct = target_pct
@@ -335,17 +340,20 @@ class RenderRunner(QThread):
                                 cur_f,
                                 self.task.total_frames,
                                 round(last_pct, 1),
-                                f"Prepass: {step_name} ({cur_f}/{tot_f} frames, {round(ratio * 100)}%)...",
+                                f"Prepass: {step_name} ({cur_f}/{tot_f} frames, {int(ratio * 100)}%)...",
                             )
+
+                # Phase 3: Stage 1 temporal window setup
                 elif "hann stage1:" in line_lower:
                     current_stage = 1
                     stage1_start_time = time.time()
-                    last_pct = max(last_pct, 5.0)
+                    base_pct = 30.0 if self.task.low_vram else 15.0
+                    last_pct = max(last_pct, base_pct)
                     self.progress_changed.emit(
                         self.task.task_id, 0, self.task.total_frames, round(last_pct, 1), "Stage 1: Temporal context analysis..."
                     )
 
-                # Stage 1: Hann window progression (5% - 55%)
+                # Stage 1: Hann sliding window progression
                 elif "window " in line_lower:
                     m_win = re.search(r"window\s+(\d+)/(\d+)", line, re.IGNORECASE)
                     if m_win:
@@ -354,8 +362,13 @@ class RenderRunner(QThread):
                             stage1_start_time = time.time()
                         w_cur, w_tot = int(m_win.group(1)), int(m_win.group(2))
                         if w_tot > 0:
-                            ratio = w_cur / w_tot
-                            target_pct = 5.0 + ratio * 50.0
+                            ratio = min(1.0, w_cur / w_tot)
+                            if self.task.low_vram:
+                                target_pct = 30.0 + ratio * 45.0  # 30% -> 75%
+                                step_desc = "Stage 1: Temporal window"
+                            else:
+                                target_pct = 15.0 + ratio * 80.0  # 15% -> 95%
+                                step_desc = "Temporal processing: window"
                             if target_pct > last_pct:
                                 last_pct = target_pct
                             cur_frame = int(ratio * self.task.total_frames)
@@ -364,28 +377,46 @@ class RenderRunner(QThread):
                                 cur_frame,
                                 self.task.total_frames,
                                 round(last_pct, 1),
-                                f"Stage 1: Temporal window {w_cur}/{w_tot}...",
+                                f"{step_desc} {w_cur}/{w_tot} ({int(ratio * 100)}%)...",
                             )
                             if w_cur == w_tot:
                                 current_stage = 2
-                                if stage1_start_time is not None:
-                                    stage1_duration = max(10.0, time.time() - stage1_start_time)
                                 stage2_start_time = time.time()
-                                last_pct = max(last_pct, 55.0)
-                                self.progress_changed.emit(
-                                    self.task.task_id,
-                                    cur_frame,
-                                    self.task.total_frames,
-                                    55.0,
-                                    "Stage 2: High-resolution matte refinement & video encoding...",
-                                )
+                                next_pct = 75.0 if self.task.low_vram else 95.0
+                                last_pct = max(last_pct, next_pct)
 
-                # Stage 3: Container muxing complete (100%)
+                # Phase 4: Stage 2 frame output and video encoding
+                elif "[stage2frame]" in line_lower:
+                    m_s2 = re.search(r"\[stage2frame\]\s+frame\s+(\d+)", line, re.IGNORECASE)
+                    if m_s2:
+                        current_stage = 2
+                        if stage2_start_time is None:
+                            stage2_start_time = time.time()
+                        s2_cur = int(m_s2.group(1))
+                        tot_f = max(1, self.task.total_frames)
+                        ratio = min(1.0, s2_cur / tot_f)
+                        if self.task.low_vram:
+                            target_pct = 75.0 + ratio * 23.0  # 75% -> 98%
+                            step_desc = "Stage 2: High-resolution matte & video encoding"
+                        else:
+                            target_pct = 15.0 + ratio * 83.0  # 15% -> 98%
+                            step_desc = "Rendering & video encoding"
+                        if target_pct > last_pct:
+                            last_pct = target_pct
+                        self.progress_changed.emit(
+                            self.task.task_id,
+                            s2_cur,
+                            tot_f,
+                            round(last_pct, 1),
+                            f"{step_desc} ({s2_cur}/{tot_f} frames, {int(ratio * 100)}%)...",
+                        )
+
+                # Phase 5: Container muxing complete (100%)
                 elif "wrote " in line_lower and "output video" in line_lower:
                     current_stage = 3
                     last_pct = 100.0
                     self.progress_changed.emit(
-                        self.task.task_id, self.task.total_frames, self.task.total_frames, 100.0, "Writing video containers complete!"
+                        self.task.task_id, self.task.total_frames, self.task.total_frames, 100.0, "Rendering complete!"
                     )
 
             stop_stage2_ticker.set()

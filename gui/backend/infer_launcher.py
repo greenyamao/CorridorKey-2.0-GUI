@@ -196,6 +196,38 @@ def main():
         runtime.iter_video_frame_chunks = tracked_iter_video
         video_io.iter_frame_dir_chunks = tracked_iter_dir
         runtime.iter_frame_dir_chunks = tracked_iter_dir
+
+        # 4b. Stage 2 & Output Writer Progress Interceptor
+        _primary_writer_id = None
+        _frames_written_total = 0
+
+        orig_threaded_write_many = video_io.ThreadedVideoWriter.write_many
+
+        def tracked_threaded_write_many(self, frames):
+            global _primary_writer_id, _frames_written_total
+            if _primary_writer_id is None:
+                _primary_writer_id = id(self)
+            orig_threaded_write_many(self, frames)
+            if id(self) == _primary_writer_id:
+                count = getattr(frames, "shape", [1])[0] if hasattr(frames, "shape") else len(frames)
+                _frames_written_total += count
+                print(f"[Stage2Frame] frame {_frames_written_total}", flush=True)
+
+        video_io.ThreadedVideoWriter.write_many = tracked_threaded_write_many
+
+        orig_exr_write_many = video_io.ExrSequenceWriter.write_many
+
+        def tracked_exr_write_many(self, frames):
+            global _primary_writer_id, _frames_written_total
+            if _primary_writer_id is None:
+                _primary_writer_id = id(self)
+            orig_exr_write_many(self, frames)
+            if id(self) == _primary_writer_id:
+                count = getattr(frames, "shape", [1])[0] if hasattr(frames, "shape") else len(frames)
+                _frames_written_total += count
+                print(f"[Stage2Frame] frame {_frames_written_total}", flush=True)
+
+        video_io.ExrSequenceWriter.write_many = tracked_exr_write_many
     except Exception:
         pass
 

@@ -28,7 +28,12 @@ from qfluentwidgets import (
 )
 
 from gui.backend.video_loader import ClipInfo
-from gui.backend.system_monitor import calculate_clip_vram_estimate, get_gpu_info, get_disk_free_gb
+from gui.backend.system_monitor import (
+    calculate_clip_vram_estimate,
+    get_gpu_info,
+    get_disk_free_gb,
+    get_optimal_hardware_profile,
+)
 from gui.backend.render_worker import RenderTask
 from gui.styles.theme import (
     ACCENT_BLUE,
@@ -400,19 +405,19 @@ class InspectorPanel(QFrame):
         self.custom_hann_row.hide()
         mhc_layout.addWidget(self.custom_hann_row)
 
-        self.manual_hann_container.hide()
-        layout.addWidget(self.manual_hann_container)
-
-        # Low VRAM mode
+        # Low VRAM mode (controlled inside manual container)
         self.chk_low_vram = CheckBox("Low GPU Memory (Disk Caching)")
         self.chk_low_vram.setChecked(False)
         self.chk_low_vram.setToolTip(
             "<b>Low GPU Memory (Disk Caching)</b><br>"
             "Offloads intermediate attention feature maps to disk (memory map).<br>"
-            "Enables rendering 4K video on 8 GB VRAM with zero risk of Out Of Memory (OOM) errors."
+            "Enables rendering high resolution video on lower VRAM GPUs with zero risk of Out Of Memory (OOM) errors."
         )
         self.chk_low_vram.stateChanged.connect(self._recalc_vram)
-        layout.addWidget(self.chk_low_vram)
+        mhc_layout.addWidget(self.chk_low_vram)
+
+        self.manual_hann_container.hide()
+        layout.addWidget(self.manual_hann_container)
 
         # Model Scale row
         scale_box = QHBoxLayout()
@@ -977,6 +982,16 @@ class InspectorPanel(QFrame):
         action_row.addWidget(self.btn_render, stretch=1)
 
         layout.addLayout(action_row)
+
+        self.lbl_render_timer_badge = QLabel("")
+        self.lbl_render_timer_badge.setStyleSheet(
+            "color: #38BDF8; font-size: 11px; font-weight: 600; font-family: Consolas, monospace; "
+            "padding: 4px 8px; background: #0F172A; border: 1px solid #1E293B; border-radius: 4px;"
+        )
+        self.lbl_render_timer_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_render_timer_badge.hide()
+        layout.addWidget(self.lbl_render_timer_badge)
+
         layout.addStretch()
 
     def _check_weights_exist(self):
@@ -1000,17 +1015,12 @@ class InspectorPanel(QFrame):
         self.despill_changed.emit(val)
 
     def _update_auto_hann_badge(self):
-        gpu_info = get_gpu_info()
-        tot_vram = gpu_info.get("total_gb", 8.0)
-        d_name = gpu_info.get("device_name", "")
-        self.lbl_auto_hann_badge.setText(f"Auto Window: Dynamic VRAM (Optimized for {tot_vram:.0f} GB GPU)")
-        tip = (
-            f"<b>Automatic Temporal Window: Dynamic VRAM</b><br>"
-            f"Automatically optimizes chunk, stride, and memory caching for {d_name or 'GPU'} ({tot_vram:.1f} GB VRAM) "
-            f"and current resolution to maximize quality and prevent Out Of Memory errors.<br>"
-            f"Check 'Manual Temporal Window' above to override."
-        )
-        self.lbl_auto_hann_badge.setToolTip(tip)
+        w = self.current_clip.width if self.current_clip else 1920
+        h = self.current_clip.height if self.current_clip else 1080
+        f = self.current_clip.total_frames if self.current_clip else 1000
+        profile = get_optimal_hardware_profile(w, h, f)
+        self.lbl_auto_hann_badge.setText(profile["badge_text"])
+        self.lbl_auto_hann_badge.setToolTip(profile["badge_tooltip"])
 
     def _on_manual_hann_toggled(self, state: int):
         is_manual = (state == Qt.CheckState.Checked.value or state == 2 or bool(state))
@@ -1018,6 +1028,7 @@ class InspectorPanel(QFrame):
         self.lbl_auto_hann_badge.setVisible(not is_manual)
         if not is_manual:
             self.cmb_hann_preset.setCurrentIndex(0)
+            self._update_auto_hann_badge()
         self._recalc_vram()
 
     def _get_default_hardware_preset(self) -> int:
@@ -1043,29 +1054,6 @@ class InspectorPanel(QFrame):
             self.lbl_vram_info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
             return
 
-        if self.chk_manual_hann.isChecked():
-            preset_idx = self.cmb_hann_preset.currentIndex()
-            auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
-            low_vram = self.chk_low_vram.isChecked()
-            if preset_idx == 6:
-                hann_chunk = self.spin_hann_chunk.value()
-            else:
-                hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 48)
-        else:
-            preset_idx = 0
-            auto_vram = True
-            low_vram = self.chk_low_vram.isChecked()
-            hann_chunk = 8
-
-        vram_needed, fits, details = calculate_clip_vram_estimate(
-            self.current_clip.width,
-            self.current_clip.height,
-            self.current_clip.total_frames,
-            low_vram=low_vram,
-            hann_chunk=hann_chunk,
-            auto_vram=auto_vram,
-        )
-
         gpu_info = get_gpu_info()
         total_gpu = gpu_info.get("total_gb", 8.0)
 
@@ -1074,21 +1062,66 @@ class InspectorPanel(QFrame):
             self.lbl_vram_info.setStyleSheet("color: #F87171; font-size: 11px; padding: 2px;")
             return
 
-        status_color = CORRIDOR_GREEN if fits else "#F87171"
-        status_text = "VRAM OK" if fits else "Warning: VRAM may exceed capacity"
+        if self.chk_manual_hann.isChecked():
+            preset_idx = self.cmb_hann_preset.currentIndex()
+            auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
+            low_vram = self.chk_low_vram.isChecked()
+            if preset_idx == 6:
+                hann_chunk = self.spin_hann_chunk.value()
+            else:
+                hann_chunk = {1: 48, 2: 24, 3: 8, 4: 80, 5: 1}.get(preset_idx, 48)
 
-        d_name = gpu_info.get("device_name", "")
-        c_major, _ = gpu_info.get("compute_cap", (8, 0))
-        is_50_series = ("50" in d_name or c_major >= 10)
-        arch_tag = " · Blackwell TF32 & 4x Batch" if is_50_series else (" · Tensor Cores & Fast Prefetch" if c_major >= 8 else "")
+            vram_needed, fits, details = calculate_clip_vram_estimate(
+                self.current_clip.width,
+                self.current_clip.height,
+                self.current_clip.total_frames,
+                low_vram=low_vram,
+                hann_chunk=hann_chunk,
+                auto_vram=auto_vram,
+            )
 
-        if auto_vram:
-            self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required ({details}){arch_tag}")
+            status_color = CORRIDOR_GREEN if fits else "#F87171"
+            status_text = "VRAM OK" if fits else "Warning: VRAM may exceed capacity"
+
+            d_name = gpu_info.get("device_name", "")
+            c_major, _ = gpu_info.get("compute_cap", (8, 0))
+            is_50_series = ("50" in d_name or c_major >= 10)
+            arch_tag = " · Blackwell TF32 & 4x Batch" if is_50_series else (" · Tensor Cores & Fast Prefetch" if c_major >= 8 else "")
+
+            if auto_vram:
+                self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required ({details}){arch_tag}")
+            else:
+                self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required{arch_tag}")
+            self.lbl_vram_info.setStyleSheet(
+                f"color: {status_color}; font-size: 11px; padding: 2px;"
+            )
         else:
-            self.lbl_vram_info.setText(f"{status_text}: ~{vram_needed:.1f} of {total_gpu:.1f} GB required{arch_tag}")
-        self.lbl_vram_info.setStyleSheet(
-            f"color: {status_color}; font-size: 11px; padding: 2px;"
-        )
+            profile = get_optimal_hardware_profile(
+                self.current_clip.width,
+                self.current_clip.height,
+                self.current_clip.total_frames,
+            )
+            self._update_auto_hann_badge()
+            vram_needed, fits, details = calculate_clip_vram_estimate(
+                self.current_clip.width,
+                self.current_clip.height,
+                self.current_clip.total_frames,
+                low_vram=profile["low_vram"],
+                hann_chunk=profile["hann_chunk"],
+                auto_vram=False,
+            )
+            self.lbl_vram_info.setText(
+                f"VRAM Optimal: ~{vram_needed:.1f} of {total_gpu:.1f} GB ({profile['preset_name']} · {profile['mode_desc']})"
+            )
+            self.lbl_vram_info.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600; padding: 2px;")
+
+    def update_render_timer(self, timer_text: str):
+        """Update live render elapsed and ETA statistics on the inspector badge."""
+        if timer_text:
+            self.lbl_render_timer_badge.setText(timer_text)
+            self.lbl_render_timer_badge.show()
+        else:
+            self.lbl_render_timer_badge.hide()
 
     def _on_choose_hint(self):
         fpath, _ = QFileDialog.getOpenFileName(
@@ -1225,6 +1258,12 @@ class InspectorPanel(QFrame):
         exr_dwa_level_val = float(self.spin_dwa_level.value())
         pix_fmt = "yuv420p"
 
+        gpu_info = get_gpu_info()
+        tot_vram = gpu_info.get("total_gb", 8.0)
+        c_major, _ = gpu_info.get("compute_cap", (8, 0))
+        d_name = gpu_info.get("device_name", "").lower()
+        is_50_series = ("50" in d_name or c_major >= 10)
+
         if self.chk_manual_hann.isChecked():
             preset_idx = self.cmb_hann_preset.currentIndex()
             auto_vram = (preset_idx == 0) and not self.chk_low_vram.isChecked()
@@ -1235,12 +1274,23 @@ class InspectorPanel(QFrame):
                 hann_map = {1: (48, 24), 2: (24, 12), 3: (8, 4), 4: (80, 40), 5: (1, 1)}
                 hann_chunk, hann_stride = hann_map.get(preset_idx, (48, 24))
             low_vram = self.chk_low_vram.isChecked()
+            if (tot_vram >= 8.0 and c_major >= 8) or is_50_series:
+                dyn_stage2_batch = 4
+            elif tot_vram >= 6.0:
+                dyn_stage2_batch = 2
+            else:
+                dyn_stage2_batch = 1
         else:
-            preset_idx = 0
-            auto_vram = True
-            hann_chunk = None
-            hann_stride = None
-            low_vram = self.chk_low_vram.isChecked()
+            opt = get_optimal_hardware_profile(
+                target_clip.width,
+                target_clip.height,
+                target_clip.total_frames,
+            )
+            auto_vram = False
+            hann_chunk = opt["hann_chunk"]
+            hann_stride = opt["hann_stride"]
+            low_vram = opt["low_vram"]
+            dyn_stage2_batch = opt["stage2_batch"]
 
         scale_vals = [1.0, 0.75, 0.50, 1.50, 2.00]
         model_scale = scale_vals[self.cmb_model_scale.currentIndex()]
@@ -1269,23 +1319,6 @@ class InspectorPanel(QFrame):
         hint_idx = self.cmb_hint_frames.currentIndex()
         use_hint = (hint_idx != 0) and bool(self.hint_file_path)
         hint_mode = "first_frame" if hint_idx <= 1 else "all_frames"
-
-        # Dynamically calculate optimal stage-2 batch based on GPU architecture and VRAM:
-        # RTX 50-series (Blackwell) or GPUs with >= 8 GB VRAM: batch=4 (saturates Tensor Cores for ~1.8x speedup)
-        # GPUs with 6 GB VRAM: batch=2 (safe for memory)
-        # GPUs with <= 4 GB: batch=1
-        gpu_info = get_gpu_info()
-        tot_vram = gpu_info.get("total_gb", 8.0)
-        c_major, _ = gpu_info.get("compute_cap", (8, 0))
-        d_name = gpu_info.get("device_name", "").lower()
-        is_50_series = ("50" in d_name or c_major >= 10)
-
-        if (tot_vram >= 8.0 and c_major >= 8) or is_50_series:
-            dyn_stage2_batch = 4
-        elif tot_vram >= 6.0:
-            dyn_stage2_batch = 2
-        else:
-            dyn_stage2_batch = 1
 
         return RenderTask(
             task_id=task_id,

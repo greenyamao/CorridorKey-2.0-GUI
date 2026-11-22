@@ -79,6 +79,13 @@ class MainWindow(QMainWindow):
         self.session_rendered_clips: set[str] = set()
         self.session_clip_output_dirs: Dict[str, str] = {}
 
+        # Render Stopwatch & Live ETA timer
+        self._render_start_time: Optional[float] = None
+        self._current_render_pct: float = 0.0
+        self._render_clock_timer = QTimer(self)
+        self._render_clock_timer.setInterval(1000)
+        self._render_clock_timer.timeout.connect(self._on_render_clock_tick)
+
         self._init_ui()
         self._setup_shortcuts()
         self._load_settings()
@@ -271,6 +278,11 @@ class MainWindow(QMainWindow):
         self.lbl_status.setStyleSheet(f"color: {CORRIDOR_GREEN}; font-size: 11px; font-weight: 600;")
         self.lbl_status.setToolTip("<b>System Status</b><br>Current status of the CorridorKey inference engine.")
         self.status_bar.addWidget(self.lbl_status, stretch=1)
+
+        self.lbl_render_timer = QLabel("")
+        self.lbl_render_timer.setStyleSheet("color: #38BDF8; font-size: 11px; font-family: Consolas, monospace; font-weight: 600; padding-right: 12px;")
+        self.lbl_render_timer.setToolTip("<b>Render Elapsed Time & ETA</b><br>Stopwatch and estimated time to completion.")
+        self.status_bar.addWidget(self.lbl_render_timer)
 
         self.lbl_vram_status = QLabel("VRAM: 0.0 / 8.0 GB")
         self.lbl_vram_status.setStyleSheet("color: #CCCCCC; font-size: 11px; font-family: Consolas, monospace; padding-right: 12px;")
@@ -738,6 +750,30 @@ class MainWindow(QMainWindow):
         next_task = self.render_queue.pop(0)
         self._start_render(next_task)
 
+    def _format_duration(self, seconds: float) -> str:
+        s = max(0, int(seconds))
+        h = s // 3600
+        m = (s % 3600) // 60
+        sec = s % 60
+        if h > 0:
+            return f"{h:02d}:{m:02d}:{sec:02d}"
+        return f"{m:02d}:{sec:02d}"
+
+    def _on_render_clock_tick(self):
+        if self._render_start_time is None:
+            return
+        elapsed = time.time() - self._render_start_time
+        el_str = self._format_duration(elapsed)
+        if self._current_render_pct >= 1.0:
+            total_est = elapsed / (self._current_render_pct / 100.0)
+            rem = max(0, total_est - elapsed)
+            rem_str = self._format_duration(rem)
+            text = f"Elapsed: {el_str} | ETA: {rem_str}"
+        else:
+            text = f"Elapsed: {el_str} | ETA: calculating..."
+        self.lbl_render_timer.setText(text)
+        self.inspector.update_render_timer(text)
+
     def _start_render(self, task: RenderTask):
         self._current_rendering_path = task.clip_path
         self._current_task_output_dir = task.output_dir
@@ -745,6 +781,12 @@ class MainWindow(QMainWindow):
         # Release existing reader handles before rendering to allow clean file replacement
         if self.current_clip and self.current_clip.path == task.clip_path:
             self._release_rendered_readers()
+
+        self._render_start_time = time.time()
+        self._current_render_pct = 0.0
+        self.lbl_render_timer.setText("Elapsed: 00:00 | ETA: calculating...")
+        self.inspector.update_render_timer("Elapsed: 00:00 | ETA: calculating...")
+        self._render_clock_timer.start()
 
         self.media_panel.set_clip_status(task.clip_path, "Rendering", 0.0)
         self.lbl_status.setText(f"Rendering: {task.clip_name}")
@@ -758,11 +800,23 @@ class MainWindow(QMainWindow):
         self.active_runner.start()
 
     def _on_render_progress(self, task_id: str, cur: int, tot: int, pct: float, status: str):
+        self._current_render_pct = pct
         if self._current_rendering_path:
             self.media_panel.set_clip_status(self._current_rendering_path, "Rendering", pct)
         self.lbl_status.setText(status)
+        self._on_render_clock_tick()
 
     def _on_render_finished(self, task_id: str, success: bool, msg: str):
+        self._render_clock_timer.stop()
+        if self._render_start_time is not None:
+            total_duration = time.time() - self._render_start_time
+            total_str = self._format_duration(total_duration)
+            is_cancelled = (self.active_runner and self.active_runner._is_cancelled) or ("cancelled" in msg.lower())
+            status_txt = f"Finished in {total_str}" if success else (f"Cancelled after {total_str}" if is_cancelled else f"Failed after {total_str}")
+            self.lbl_render_timer.setText(status_txt)
+            self.inspector.update_render_timer(status_txt)
+            self._render_start_time = None
+
         self.inspector.set_rendering_state(False)
         clip_path = self._current_rendering_path
         clip_name = Path(clip_path).name if clip_path else "Task"
